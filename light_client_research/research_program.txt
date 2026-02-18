@@ -1,0 +1,66 @@
+
+1) Define a JSON format for storing offline data
+
+2) generate synth test data - python script
+  synt_test_01.json
+  synt_test_02.json
+  synt_test_03.json
+
+Save the corresponding TX, too.
+  synt_test_01_tx.json
+  synt_test_02_tx.json
+  synt_test_03_tx.json
+  
+
+3) extract test data from real bitcoin node
+ a) testnet
+
+  testnet_001.json
+  testnet_002.json
+  
+  testnet_001_tx.json
+  testnet_002_tx.json
+
+ b) mainnet
+  mainnet_001.json
+  mainnet_002.json
+
+  mainnet_001_tx.json
+  mainnet_002_tx.json
+
+4) validator script which proofs the validity of test data
+
+5) generate a few test cases for the extract files
+ a) finding a single scriptpubkey
+ b) develop more real life test cases
+ c) negative tests -> no scriptpubkey in the DB 
+
+
+
+6) C++ benchmarking - without network and indexing cost
+
+6.1) mini C++ test case in bitcoin test harness
+ - input the test cases from 5) and the test data in the json
+ - benchmarks current GCS 
+ - size comparision
+ - Querry-time
+ - False Positive Rate
+
+6.2.1) create dummy indexer based on tx json information
+ -> add benchmarking-dummy capability to test harness
+
+6.2.2) different block size indexer option
+6.2.3) hierarchical indexer option
+6.2.4) Xor Filters, Binary Fuse Filters, Cuckoo Filters
+
+7) best algo -> add to bitcoin core for testing
+
+8) light client test app -> emulates wallet behaviour on network due to indexing
+  -> measuring with network transport overhead
+  -> comparing measurement with block filter
+
+9) Same test on 8) but on an ARM machine (Rasp PI) to emulate mobile usage
+
+10) benchmarking creating index on server side with new algo
+
+
