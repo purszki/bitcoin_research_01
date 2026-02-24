@@ -1,5 +1,5 @@
 
-1) Define a JSON format for storing offline data
+1) Define a JSON format for storing offline data of scriptpubkeys/friends
 
 2) generate synth test data - python script
   synt_test_01.json
@@ -35,32 +35,61 @@ Save the corresponding TX, too.
  b) develop more real life test cases
  c) negative tests -> no scriptpubkey in the DB 
 
-
-
 6) C++ benchmarking - without network and indexing cost
 
 6.1) mini C++ test case in bitcoin test harness
  - input the test cases from 5) and the test data in the json
- - benchmarks current GCS 
+ - benchmarks current GCS Basic (BIP-158) 
  - size comparision
  - Querry-time
  - False Positive Rate
+ - NOTE: The bench MUST perform a validity check of the new filter before benchmarking.
+   (An increase in FP rate is acceptable and does not affect the validity of the filter).
+
 
 6.2.1) create dummy indexer based on tx json information
  -> add benchmarking-dummy capability to test harness
+
+6.2.1.1) C++ Filter Generation Tooling
+ - Create a C++ utility that reads `testnet_001.json` and `testnet_001_tx.json`.
+ - Output a new dataset ( `testnet_001.dummy_filter.json`).
+ - Goal: Avoid re-implementing complex math/hashing in Python.
+
+6.2.1.2) Comparative Validation
+ - Use the new `.dummy_filter.json` files as input to verify zero False Negatives.
+ - Compare actual FP rates against the Basic (BIP-158) baseline results.
+ - Compare speed against Basic (BIP-158) baseline results.
 
 6.2.2) different block size indexer option
 6.2.3) hierarchical indexer option
 6.2.4) Xor Filters, Binary Fuse Filters, Cuckoo Filters
 
-7) best algo -> add to bitcoin core for testing
+7) best algo measurements
+ - Measure size vs. query-time vs. FP-rate.
+ - Measure Server-side cost.
+ - Analyze memory access patterns (Cache efficiency) for mobile/ARM targets.
 
-8) light client test app -> emulates wallet behaviour on network due to indexing
+8) (Optional) Bitcoin Core Integration
+ - Define new `BlockFilterType` in `src/blockfilter.h`.
+ - Draft P2P protocol extensions (BIP-157) for new filter types.
+ - Indexing overhead analysis (Disk/CPU).
+
+9) (Optional) light client test app -> emulates wallet behaviour on network due to indexing
   -> measuring with network transport overhead
   -> comparing measurement with block filter
 
-9) Same test on 8) but on an ARM machine (Rasp PI) to emulate mobile usage
+10) Same test on 8) but on an ARM machine (Rasp PI) to emulate mobile usage
 
-10) benchmarking creating index on server side with new algo
+
+NOTE ON HYBRID TOOLING STRATEGY:
+- PYTHON: Orchestration, file path management, and high-level validation (schema/JSON).
+- C++: Core filter logic, hashing, construction, and performance measurement.
+
+NOTES on AI usage:
+ - boilerplate python-code: AI generation, validation is OK with multiple agents
+ - C++ benchmarking boilerplate code: AI gen OK
+ - C++ validation: MUST manual coding
+ - Algo prototyping: hybrid approach
+
 
 
