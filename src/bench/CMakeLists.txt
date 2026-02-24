@@ -44,6 +44,7 @@ add_executable(bench_bitcoin
   prevector.cpp
   random.cpp
   readwriteblock.cpp
+  research_bip158.cpp
   rollingbloom.cpp
   rpc_blockchain.cpp
   rpc_mempool.cpp
