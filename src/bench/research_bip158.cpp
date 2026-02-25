@@ -4,8 +4,11 @@
 
 #include <bench/bench.h>
 #include <blockfilter.h>
+#include <dummyfilter.h>
 #include <uint256.h>
 #include <univalue.h>
+#include <util/check.h>
+#include <util/filter_bench.h>
 #include <util/fs.h>
 #include <util/strencodings.h>
 
@@ -23,24 +26,19 @@ static const fs::path SCENARIO_SINGLE_POSITIVE =
     fs::PathFromString("light_client_research/benchmark_input_data/scenario_testnet_single_positive.json");
 static const fs::path SCENARIO_WALLET_MULTI = 
     fs::PathFromString("light_client_research/benchmark_input_data/scenario_testnet_wallet_like_multi.json");
-static const fs::path SCENARIO_STRICT_NEGATIVE = 
-    fs::PathFromString("light_client_research/benchmark_input_data/scenario_testnet_strict_negative.json");
-static const fs::path SCENARIO_MIXED_PRESENT_ABSENT = 
-    fs::PathFromString("light_client_research/benchmark_input_data/scenario_testnet_mixed_present_absent.json");
+static const fs::path SCENARIO_STRICT_NEGATIVE = fs::PathFromString("light_client_research/benchmark_input_data/scenario_testnet_strict_negative.json");
+static const fs::path SCENARIO_MIXED_PRESENT_ABSENT = fs::PathFromString("light_client_research/benchmark_input_data/scenario_testnet_mixed_present_absent.json");
+static const fs::path SCENARIO_DUMMY_TEST = fs::PathFromString("light_client_research/benchmark_input_data/scenario_dummy_test.json");
 
 struct ScenarioData {
     std::vector<BlockFilter> block_filters;
     std::vector<GCSFilter::ElementSet> queries;
 };
 
-[[nodiscard]] static std::string ReadTextFile(const fs::path& path)
-{
-    std::ifstream in{path.std_path()};
-    if (!in.is_open()) {
-        throw std::runtime_error("failed to open file: " + fs::PathToString(path));
-    }
-    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
-}
+struct ScenarioDataDummy {
+    std::vector<BlockFilterDummy> block_filters;
+    std::vector<GCSFilterDummy::ElementSet> queries;
+};
 
 [[nodiscard]] static const UniValue& GetRequired(const UniValue& obj, std::string_view key, UniValue::VType type)
 {
@@ -51,57 +49,28 @@ struct ScenarioData {
     return value;
 }
 
-[[nodiscard]] static std::vector<unsigned char> ParseHexStrict(const std::string& hex, std::string_view field_name)
-{
-    auto parsed = TryParseHex<unsigned char>(hex);
-    if (!parsed.has_value()) {
-        throw std::runtime_error("invalid hex in field: " + std::string(field_name));
-    }
-    return std::move(parsed.value());
-}
-
-[[nodiscard]] static uint256 ParseUint256Strict(const std::string& hex, std::string_view field_name)
-{
-    const auto parsed = uint256::FromHex(hex);
-    if (!parsed.has_value()) {
-        throw std::runtime_error("invalid uint256 hex in field: " + std::string(field_name));
-    }
-    return parsed.value();
-}
-
 [[nodiscard]] static ScenarioData LoadScenario(const fs::path& scenario_path)
 {
-    UniValue scenario_json;
-    if (!scenario_json.read(ReadTextFile(scenario_path)) || !scenario_json.isObject()) {
-        throw std::runtime_error("invalid scenario JSON: " + fs::PathToString(scenario_path));
-    }
+    UniValue scenario_json = FilterBench::ReadDataset(scenario_path);
     const UniValue& scenario_obj = scenario_json.get_obj();
 
     const UniValue& dataset_files = GetRequired(scenario_obj, "dataset_files", UniValue::VOBJ).get_obj();
     const std::string blocks_file = GetRequired(dataset_files, "blocks_json", UniValue::VSTR).get_str();
     const fs::path blocks_path = scenario_path.parent_path() / blocks_file;
 
-    UniValue blocks_json;
-    if (!blocks_json.read(ReadTextFile(blocks_path)) || !blocks_json.isObject()) {
-        throw std::runtime_error("invalid blocks dataset JSON: " + fs::PathToString(blocks_path));
-    }
-
+    UniValue blocks_json = FilterBench::ReadDataset(blocks_path);
     ScenarioData out;
 
     const UniValue& blocks = GetRequired(blocks_json.get_obj(), "blocks", UniValue::VARR).get_array();
     out.block_filters.reserve(blocks.size());
     for (const UniValue& block : blocks.getValues()) {
-        if (!block.isObject()) {
-            throw std::runtime_error("blocks[] entry must be object");
-        }
-        const UniValue& block_obj = block.get_obj();
-        const std::string block_hash_hex = GetRequired(block_obj, "block_hash", UniValue::VSTR).get_str();
-        const std::string filter_hex = GetRequired(block_obj, "filter_hex", UniValue::VSTR).get_str();
+        const std::string block_hash_hex = GetRequired(block.get_obj(), "block_hash", UniValue::VSTR).get_str();
+        const std::string filter_hex = GetRequired(block.get_obj(), "filter_hex", UniValue::VSTR).get_str();
 
         out.block_filters.emplace_back(
             BlockFilterType::BASIC,
-            ParseUint256Strict(block_hash_hex, "block_hash"),
-            ParseHexStrict(filter_hex, "filter_hex"),
+            uint256::FromHex(block_hash_hex).value(),
+            ParseHex(filter_hex),
             /*skip_decode_check=*/false
         );
     }
@@ -109,18 +78,50 @@ struct ScenarioData {
     const UniValue& queries = GetRequired(scenario_obj, "queries", UniValue::VARR).get_array();
     out.queries.reserve(queries.size());
     for (const UniValue& query : queries.getValues()) {
-        if (!query.isObject()) {
-            throw std::runtime_error("queries[] entry must be object");
-        }
-        const UniValue& query_obj = query.get_obj();
-        const UniValue& script_pub_keys = GetRequired(query_obj, "script_pub_keys", UniValue::VARR).get_array();
-
+        const UniValue& script_pub_keys = GetRequired(query.get_obj(), "script_pub_keys", UniValue::VARR).get_array();
         GCSFilter::ElementSet elements;
-        for (const UniValue& script_pub_key : script_pub_keys.getValues()) {
-            if (!script_pub_key.isStr()) {
-                throw std::runtime_error("script_pub_keys[] must be string");
-            }
-            elements.insert(ParseHexStrict(script_pub_key.get_str(), "script_pub_keys"));
+        for (const UniValue& spk : script_pub_keys.getValues()) {
+            elements.insert(ParseHex(spk.get_str()));
+        }
+        out.queries.push_back(std::move(elements));
+    }
+
+    return out;
+}
+
+[[nodiscard]] static ScenarioDataDummy LoadScenarioDummy(const fs::path& scenario_path)
+{
+    UniValue scenario_json = FilterBench::ReadDataset(scenario_path);
+    const UniValue& scenario_obj = scenario_json.get_obj();
+
+    const UniValue& dataset_files = GetRequired(scenario_obj, "dataset_files", UniValue::VOBJ).get_obj();
+    const std::string blocks_file = GetRequired(dataset_files, "blocks_json", UniValue::VSTR).get_str();
+    const fs::path blocks_path = scenario_path.parent_path() / blocks_file;
+
+    UniValue blocks_json = FilterBench::ReadDataset(blocks_path);
+    ScenarioDataDummy out;
+
+    const UniValue& blocks = GetRequired(blocks_json.get_obj(), "blocks", UniValue::VARR).get_array();
+    out.block_filters.reserve(blocks.size());
+    for (const UniValue& block : blocks.getValues()) {
+        const std::string block_hash_hex = GetRequired(block.get_obj(), "block_hash", UniValue::VSTR).get_str();
+        const std::string filter_hex = GetRequired(block.get_obj(), "filter_hex", UniValue::VSTR).get_str();
+
+        out.block_filters.emplace_back(
+            BlockFilterType::BASIC,
+            uint256::FromHex(block_hash_hex).value(),
+            ParseHex(filter_hex),
+            /*skip_decode_check=*/false
+        );
+    }
+
+    const UniValue& queries = GetRequired(scenario_obj, "queries", UniValue::VARR).get_array();
+    out.queries.reserve(queries.size());
+    for (const UniValue& query : queries.getValues()) {
+        const UniValue& script_pub_keys = GetRequired(query.get_obj(), "script_pub_keys", UniValue::VARR).get_array();
+        GCSFilterDummy::ElementSet elements;
+        for (const UniValue& spk : script_pub_keys.getValues()) {
+            elements.insert(ParseHex(spk.get_str()));
         }
         out.queries.push_back(std::move(elements));
     }
@@ -145,29 +146,46 @@ static void RunScenario(benchmark::Bench& bench, const fs::path& scenario_path)
     });
 }
 
-static void ResearchBIP158SinglePositive(benchmark::Bench& bench)
+static void RunScenarioDummy(benchmark::Bench& bench, const fs::path& scenario_path)
 {
-    RunScenario(bench, SCENARIO_SINGLE_POSITIVE);
+    const ScenarioData data_basic = LoadScenario(scenario_path);
+    const ScenarioDataDummy data_dummy = LoadScenarioDummy(scenario_path);
+
+    // Validation: Ensure Dummy results exactly match Basic results
+    for (size_t q_idx = 0; q_idx < data_basic.queries.size(); ++q_idx) {
+        for (size_t b_idx = 0; b_idx < data_basic.block_filters.size(); ++b_idx) {
+            bool result_basic = data_basic.block_filters[b_idx].GetFilter().MatchAny(data_basic.queries[q_idx]);
+            bool result_dummy = data_dummy.block_filters[b_idx].GetFilter().MatchAny(data_dummy.queries[q_idx]);
+            Assert(result_basic == result_dummy);
+        }
+    }
+
+    bench.run([&] {
+        std::size_t match_count{0};
+        for (const GCSFilterDummy::ElementSet& query : data_dummy.queries) {
+            for (const BlockFilterDummy& block_filter : data_dummy.block_filters) {
+                if (block_filter.GetFilter().MatchAny(query)) {
+                    ++match_count;
+                }
+            }
+        }
+        ankerl::nanobench::doNotOptimizeAway(match_count);
+    });
 }
 
-static void ResearchBIP158WalletLikeMulti(benchmark::Bench& bench)
-{
-    RunScenario(bench, SCENARIO_WALLET_MULTI);
-}
+static void ResearchBIP158SinglePositive(benchmark::Bench& bench) { RunScenario(bench, SCENARIO_SINGLE_POSITIVE); }
+static void ResearchBIP158WalletLikeMulti(benchmark::Bench& bench) { RunScenario(bench, SCENARIO_WALLET_MULTI); }
+static void ResearchBIP158StrictNegative(benchmark::Bench& bench) { RunScenario(bench, SCENARIO_STRICT_NEGATIVE); }
+static void ResearchBIP158MixedPresentAbsent(benchmark::Bench& bench) { RunScenario(bench, SCENARIO_MIXED_PRESENT_ABSENT); }
 
-static void ResearchBIP158StrictNegative(benchmark::Bench& bench)
-{
-    RunScenario(bench, SCENARIO_STRICT_NEGATIVE);
-}
-
-static void ResearchBIP158MixedPresentAbsent(benchmark::Bench& bench)
-{
-    RunScenario(bench, SCENARIO_MIXED_PRESENT_ABSENT);
-}
+static void ResearchDummySinglePositive(benchmark::Bench& bench) { RunScenarioDummy(bench, SCENARIO_SINGLE_POSITIVE); }
+static void ResearchDummyTestComparison(benchmark::Bench& bench) { RunScenarioDummy(bench, SCENARIO_DUMMY_TEST); }
 
 BENCHMARK(ResearchBIP158SinglePositive);
 BENCHMARK(ResearchBIP158WalletLikeMulti);
 BENCHMARK(ResearchBIP158StrictNegative);
 BENCHMARK(ResearchBIP158MixedPresentAbsent);
+BENCHMARK(ResearchDummySinglePositive);
+BENCHMARK(ResearchDummyTestComparison);
 
 } // namespace
