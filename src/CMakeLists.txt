@@ -181,6 +181,8 @@ add_library(bitcoin_node STATIC EXCLUDE_FROM_ALL
   bip324.cpp
   blockencodings.cpp
   blockfilter.cpp
+  dummyfilter.cpp
+  util/filter_bench.cpp
   consensus/tx_verify.cpp
   dbwrapper.cpp
   deploymentstatus.cpp
@@ -380,6 +382,20 @@ if(BUILD_UTIL)
   install_binary_component(bitcoin-util HAS_MANPAGE)
 endif()
 
+if(BUILD_BENCH)
+  add_executable(bitcoin-research-filter
+    bitcoin-research-filter.cpp
+    noui.cpp
+  )
+  target_link_libraries(bitcoin-research-filter
+    PRIVATE
+      bitcoin_node
+      bitcoin_common
+      bitcoin_util
+      univalue
+      core_interface
+  )
+endif()
 
 if(BUILD_GUI)
   add_subdirectory(qt)
