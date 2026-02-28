@@ -4,7 +4,6 @@
 
 #include <bench/bench.h>
 #include <blockfilter.h>
-#include <dummyfilter.h>
 #include <uint256.h>
 #include <univalue.h>
 #include <util/check.h>
@@ -31,16 +30,26 @@ static const fs::path SCENARIO_WALLET_MULTI =
     fs::PathFromString("light_client_research/benchmark_input_data/scenario_testnet_wallet_like_multi.json");
 static const fs::path SCENARIO_STRICT_NEGATIVE = fs::PathFromString("light_client_research/benchmark_input_data/scenario_testnet_strict_negative.json");
 static const fs::path SCENARIO_MIXED_PRESENT_ABSENT = fs::PathFromString("light_client_research/benchmark_input_data/scenario_testnet_mixed_present_absent.json");
-static const fs::path SCENARIO_DUMMY_TEST = fs::PathFromString("light_client_research/benchmark_input_data/scenario_dummy_test.json");
+static const fs::path SCENARIO_TESTNET_RECENT_10K_POSITIVE_HEAVY =
+    fs::PathFromString("light_client_research/testnet_datasets/scenario_testnet_recent_10k_h4837557_h4847556_tx_positive_heavy.json");
+static const fs::path SCENARIO_TESTNET_RECENT_10K_BALANCED =
+    fs::PathFromString("light_client_research/testnet_datasets/scenario_testnet_recent_10k_h4837557_h4847556_tx_balanced.json");
+static const fs::path SCENARIO_TESTNET_RECENT_10K_NEGATIVE_HEAVY =
+    fs::PathFromString("light_client_research/testnet_datasets/scenario_testnet_recent_10k_h4837557_h4847556_tx_negative_heavy.json");
+static const fs::path SCENARIO_TESTNET_RECENT_10K_STRICT_NEGATIVE =
+    fs::PathFromString("light_client_research/testnet_datasets/scenario_testnet_recent_10k_h4837557_h4847556_tx_strict_negative.json");
+static const fs::path SCENARIO_TESTNET_RECENT_50K_POSITIVE_HEAVY =
+    fs::PathFromString("light_client_research/testnet_datasets/scenario_testnet_recent_50k_h4797557_h4847556_tx_positive_heavy.json");
+static const fs::path SCENARIO_TESTNET_RECENT_50K_BALANCED =
+    fs::PathFromString("light_client_research/testnet_datasets/scenario_testnet_recent_50k_h4797557_h4847556_tx_balanced.json");
+static const fs::path SCENARIO_TESTNET_RECENT_50K_NEGATIVE_HEAVY =
+    fs::PathFromString("light_client_research/testnet_datasets/scenario_testnet_recent_50k_h4797557_h4847556_tx_negative_heavy.json");
+static const fs::path SCENARIO_TESTNET_RECENT_50K_STRICT_NEGATIVE =
+    fs::PathFromString("light_client_research/testnet_datasets/scenario_testnet_recent_50k_h4797557_h4847556_tx_strict_negative.json");
 
 struct ScenarioData {
     std::vector<BlockFilter> block_filters;
     std::vector<GCSFilter::ElementSet> queries;
-};
-
-struct ScenarioDataDummy {
-    std::vector<BlockFilterDummy> block_filters;
-    std::vector<GCSFilterDummy::ElementSet> queries;
 };
 
 [[nodiscard]] static std::optional<std::size_t> MatchAnyBasicFirstIndex(
@@ -86,40 +95,21 @@ struct ScenarioDataDummy {
     return out;
 }
 
-[[nodiscard]] static ScenarioDataDummy LoadScenarioDummy(const fs::path& scenario_path)
+[[nodiscard]] static std::vector<bool> ParseQueryExpectAnyMatch(const UniValue& queries_arr)
 {
-    UniValue scenario_json = FilterBench::ReadDataset(scenario_path);
-    const UniValue& dataset_files = GetRequired(scenario_json.get_obj(), "dataset_files", UniValue::VOBJ).get_obj();
-    FilterBench::FullDataset tx_dataset = FilterBench::ReadFullDataset(
-        scenario_path.parent_path() / GetRequired(dataset_files, "tx_json", UniValue::VSTR).get_str()
-    );
-    FilterBench::PreparedDataset prepared = FilterBench::PreparedDataset::FromFullDataset(tx_dataset);
-    
-    ScenarioDataDummy out;
-    out.block_filters = prepared.GetDummyBlockFilters();
-    out.queries = FilterBench::ParseQueries(scenario_json["queries"]);
+    std::vector<bool> out;
+    out.reserve(queries_arr.size());
+    for (const UniValue& query : queries_arr.getValues()) {
+        const UniValue& expect_any_match = GetRequired(query.get_obj(), "expect_any_match", UniValue::VBOOL);
+        out.push_back(expect_any_match.get_bool());
+    }
     return out;
 }
 
-static void RunScenario(benchmark::Bench& bench, const fs::path& scenario_path)
-{
-    const ScenarioData data = LoadScenario(scenario_path);
-
-    bench.run([&] {
-        std::size_t match_count{0};
-        for (const GCSFilter::ElementSet& query : data.queries) {
-            for (const BlockFilter& block_filter : data.block_filters) {
-                if (block_filter.GetFilter().MatchAny(query)) {
-                    ++match_count;
-                }
-            }
-        }
-        ankerl::nanobench::doNotOptimizeAway(match_count);
-    });
-}
-
-
-static void RunScenarioHierarchicalOnTheFly(benchmark::Bench& bench, const fs::path& scenario_path)
+static void RunScenarioHierarchicalOnTheFlyAllQueries(
+    benchmark::Bench& bench,
+    const fs::path& scenario_path,
+    std::string_view scenario_tag)
 {
     const ScenarioData data_basic = LoadScenario(scenario_path);
 
@@ -143,39 +133,58 @@ static void RunScenarioHierarchicalOnTheFly(benchmark::Bench& bench, const fs::p
     const FilterBench::HierarchicalBlockFilters& hierarchical = hierarchical_sets.front();
 
     const std::vector<GCSFilter::ElementSet> queries = FilterBench::ParseQueries(scenario_json["queries"]);
+    const std::vector<bool> expected_any_match = ParseQueryExpectAnyMatch(scenario_json["queries"]);
+    Assert(!queries.empty());
+    Assert(queries.size() == data_basic.queries.size());
+    Assert(queries.size() == expected_any_match.size());
 
-    // Validation: Ensure hierarchical result presence matches baseline Basic presence.
-    for (size_t q_idx = 0; q_idx < data_basic.queries.size(); ++q_idx) {
+    // Validation:
+    // - Expected-positive queries must not be missed.
+    // - Expected-negative queries are not compared against Basic, because Basic
+    //   can produce BIP158 false positives at large scale.
+    for (size_t query_index = 0; query_index < queries.size(); ++query_index) {
         bool result_basic{false};
         for (const BlockFilter& block_filter : data_basic.block_filters) {
-            if (block_filter.GetFilter().MatchAny(data_basic.queries[q_idx])) {
+            if (block_filter.GetFilter().MatchAny(data_basic.queries[query_index])) {
                 result_basic = true;
                 break;
             }
         }
-        const bool result_hierarchical = hierarchical.MatchAny(queries[q_idx]).has_value();
-        if (result_basic != result_hierarchical) {
-            std::cerr << "Mismatch in query " << q_idx << std::endl;
+        const bool result_hierarchical = hierarchical.MatchAny(queries[query_index]).has_value();
+        if (expected_any_match[query_index] && !result_hierarchical) {
+            std::cerr << "Unexpected hierarchical miss in expected-positive query " << query_index << std::endl;
+            Assert(false);
+        }
+        if (expected_any_match[query_index] && !result_basic) {
+            std::cerr << "Scenario expected-positive query did not match Basic baseline " << query_index << std::endl;
             Assert(false);
         }
     }
 
-    bench.run([&] {
-        std::size_t match_count{0};
-        std::size_t matched_index_sum{0};
-        for (const GCSFilter::ElementSet& query : queries) {
-            const std::optional<std::size_t> match_idx = hierarchical.MatchAny(query);
+    for (size_t query_index = 0; query_index < queries.size(); ++query_index) {
+        bench.name(
+            "ResearchHierarchicalOnTheFly" +
+            std::string(scenario_tag) +
+            "Q" +
+            std::to_string(query_index + 1));
+        bench.run([&, query_index] {
+            const std::optional<std::size_t> match_idx = hierarchical.MatchAny(queries[query_index]);
+            std::size_t has_match{0};
+            std::size_t matched_index_sum{0};
             if (match_idx.has_value()) {
-                ++match_count;
-                matched_index_sum += *match_idx;
+                has_match = 1;
+                matched_index_sum = *match_idx;
             }
-        }
-        ankerl::nanobench::doNotOptimizeAway(match_count);
-        ankerl::nanobench::doNotOptimizeAway(matched_index_sum);
-    });
+            ankerl::nanobench::doNotOptimizeAway(has_match);
+            ankerl::nanobench::doNotOptimizeAway(matched_index_sum);
+        });
+    }
 }
 
-static void RunScenarioBasicOnTheFly(benchmark::Bench& bench, const fs::path& scenario_path)
+static void RunScenarioBasicOnTheFlyAllQueries(
+    benchmark::Bench& bench,
+    const fs::path& scenario_path,
+    std::string_view scenario_tag)
 {
     const ScenarioData data_basic = LoadScenario(scenario_path);
 
@@ -191,58 +200,128 @@ static void RunScenarioBasicOnTheFly(benchmark::Bench& bench, const fs::path& sc
     std::cout << "Generating filter set using algo: basic..." << std::endl;
     std::vector<BlockFilter> on_the_fly_basic = prepared.GetBasicBlockFilters();
     const std::vector<GCSFilter::ElementSet> queries = FilterBench::ParseQueries(scenario_json["queries"]);
+    Assert(!queries.empty());
+    Assert(queries.size() == data_basic.queries.size());
 
     // Validation: Ensure first-match existence matches baseline Basic presence.
-    for (size_t q_idx = 0; q_idx < data_basic.queries.size(); ++q_idx) {
+    for (size_t query_index = 0; query_index < queries.size(); ++query_index) {
         bool result_basic{false};
         for (const BlockFilter& block_filter : data_basic.block_filters) {
-            if (block_filter.GetFilter().MatchAny(data_basic.queries[q_idx])) {
+            if (block_filter.GetFilter().MatchAny(data_basic.queries[query_index])) {
                 result_basic = true;
                 break;
             }
         }
-        const bool result_on_the_fly = MatchAnyBasicFirstIndex(on_the_fly_basic, queries[q_idx]).has_value();
+        const bool result_on_the_fly = MatchAnyBasicFirstIndex(on_the_fly_basic, queries[query_index]).has_value();
         if (result_basic != result_on_the_fly) {
-            std::cerr << "Mismatch in query " << q_idx << std::endl;
+            std::cerr << "Mismatch in query " << query_index << std::endl;
             Assert(false);
         }
     }
 
-    bench.run([&] {
-        std::size_t match_count{0};
-        std::size_t matched_index_sum{0};
-        for (const GCSFilter::ElementSet& query : queries) {
-            const std::optional<std::size_t> match_idx = MatchAnyBasicFirstIndex(on_the_fly_basic, query);
+    for (size_t query_index = 0; query_index < queries.size(); ++query_index) {
+        bench.name(
+            "ResearchBasicOnTheFly" +
+            std::string(scenario_tag) +
+            "Q" +
+            std::to_string(query_index + 1));
+        bench.run([&, query_index] {
+            std::size_t has_match{0};
+            std::size_t matched_index_sum{0};
+            const std::optional<std::size_t> match_idx = MatchAnyBasicFirstIndex(on_the_fly_basic, queries[query_index]);
             if (match_idx.has_value()) {
-                ++match_count;
-                matched_index_sum += *match_idx;
+                has_match = 1;
+                matched_index_sum = *match_idx;
             }
-        }
-        ankerl::nanobench::doNotOptimizeAway(match_count);
-        ankerl::nanobench::doNotOptimizeAway(matched_index_sum);
-    });
+            ankerl::nanobench::doNotOptimizeAway(has_match);
+            ankerl::nanobench::doNotOptimizeAway(matched_index_sum);
+        });
+    }
 }
 
 
+static void ResearchBasicOnTheFlyTestnetRecentTenKPositiveHeavy(benchmark::Bench& bench)
+{
+    RunScenarioBasicOnTheFlyAllQueries(bench, SCENARIO_TESTNET_RECENT_10K_POSITIVE_HEAVY, "TestnetRecentTenKPositiveHeavy");
+}
+static void ResearchBasicOnTheFlyTestnetRecentTenKBalanced(benchmark::Bench& bench)
+{
+    RunScenarioBasicOnTheFlyAllQueries(bench, SCENARIO_TESTNET_RECENT_10K_BALANCED, "TestnetRecentTenKBalanced");
+}
+static void ResearchBasicOnTheFlyTestnetRecentTenKNegativeHeavy(benchmark::Bench& bench)
+{
+    RunScenarioBasicOnTheFlyAllQueries(bench, SCENARIO_TESTNET_RECENT_10K_NEGATIVE_HEAVY, "TestnetRecentTenKNegativeHeavy");
+}
+static void ResearchBasicOnTheFlyTestnetRecentTenKStrictNegative(benchmark::Bench& bench)
+{
+    RunScenarioBasicOnTheFlyAllQueries(bench, SCENARIO_TESTNET_RECENT_10K_STRICT_NEGATIVE, "TestnetRecentTenKStrictNegative");
+}
+static void ResearchBasicOnTheFlyTestnetRecentFiftyKPositiveHeavy(benchmark::Bench& bench)
+{
+    RunScenarioBasicOnTheFlyAllQueries(bench, SCENARIO_TESTNET_RECENT_50K_POSITIVE_HEAVY, "TestnetRecentFiftyKPositiveHeavy");
+}
+static void ResearchBasicOnTheFlyTestnetRecentFiftyKBalanced(benchmark::Bench& bench)
+{
+    RunScenarioBasicOnTheFlyAllQueries(bench, SCENARIO_TESTNET_RECENT_50K_BALANCED, "TestnetRecentFiftyKBalanced");
+}
+static void ResearchBasicOnTheFlyTestnetRecentFiftyKNegativeHeavy(benchmark::Bench& bench)
+{
+    RunScenarioBasicOnTheFlyAllQueries(bench, SCENARIO_TESTNET_RECENT_50K_NEGATIVE_HEAVY, "TestnetRecentFiftyKNegativeHeavy");
+}
+static void ResearchBasicOnTheFlyTestnetRecentFiftyKStrictNegative(benchmark::Bench& bench)
+{
+    RunScenarioBasicOnTheFlyAllQueries(bench, SCENARIO_TESTNET_RECENT_50K_STRICT_NEGATIVE, "TestnetRecentFiftyKStrictNegative");
+}
 
-static void ResearchBasicOnTheFlySinglePositive(benchmark::Bench& bench) { RunScenarioBasicOnTheFly(bench, SCENARIO_SINGLE_POSITIVE); }
-static void ResearchBasicOnTheFlyWalletLikeMulti(benchmark::Bench& bench) { RunScenarioBasicOnTheFly(bench, SCENARIO_WALLET_MULTI); }
-static void ResearchBasicOnTheFlyStrictNegative(benchmark::Bench& bench) { RunScenarioBasicOnTheFly(bench, SCENARIO_STRICT_NEGATIVE); }
-static void ResearchBasicOnTheFlyMixedPresentAbsent(benchmark::Bench& bench) { RunScenarioBasicOnTheFly(bench, SCENARIO_MIXED_PRESENT_ABSENT); }
+static void ResearchHierarchicalOnTheFlyTestnetRecentTenKPositiveHeavy(benchmark::Bench& bench)
+{
+    RunScenarioHierarchicalOnTheFlyAllQueries(bench, SCENARIO_TESTNET_RECENT_10K_POSITIVE_HEAVY, "TestnetRecentTenKPositiveHeavy");
+}
+static void ResearchHierarchicalOnTheFlyTestnetRecentTenKBalanced(benchmark::Bench& bench)
+{
+    RunScenarioHierarchicalOnTheFlyAllQueries(bench, SCENARIO_TESTNET_RECENT_10K_BALANCED, "TestnetRecentTenKBalanced");
+}
+static void ResearchHierarchicalOnTheFlyTestnetRecentTenKNegativeHeavy(benchmark::Bench& bench)
+{
+    RunScenarioHierarchicalOnTheFlyAllQueries(bench, SCENARIO_TESTNET_RECENT_10K_NEGATIVE_HEAVY, "TestnetRecentTenKNegativeHeavy");
+}
+static void ResearchHierarchicalOnTheFlyTestnetRecentTenKStrictNegative(benchmark::Bench& bench)
+{
+    RunScenarioHierarchicalOnTheFlyAllQueries(bench, SCENARIO_TESTNET_RECENT_10K_STRICT_NEGATIVE, "TestnetRecentTenKStrictNegative");
+}
+static void ResearchHierarchicalOnTheFlyTestnetRecentFiftyKPositiveHeavy(benchmark::Bench& bench)
+{
+    RunScenarioHierarchicalOnTheFlyAllQueries(bench, SCENARIO_TESTNET_RECENT_50K_POSITIVE_HEAVY, "TestnetRecentFiftyKPositiveHeavy");
+}
+static void ResearchHierarchicalOnTheFlyTestnetRecentFiftyKBalanced(benchmark::Bench& bench)
+{
+    RunScenarioHierarchicalOnTheFlyAllQueries(bench, SCENARIO_TESTNET_RECENT_50K_BALANCED, "TestnetRecentFiftyKBalanced");
+}
+static void ResearchHierarchicalOnTheFlyTestnetRecentFiftyKNegativeHeavy(benchmark::Bench& bench)
+{
+    RunScenarioHierarchicalOnTheFlyAllQueries(bench, SCENARIO_TESTNET_RECENT_50K_NEGATIVE_HEAVY, "TestnetRecentFiftyKNegativeHeavy");
+}
+static void ResearchHierarchicalOnTheFlyTestnetRecentFiftyKStrictNegative(benchmark::Bench& bench)
+{
+    RunScenarioHierarchicalOnTheFlyAllQueries(bench, SCENARIO_TESTNET_RECENT_50K_STRICT_NEGATIVE, "TestnetRecentFiftyKStrictNegative");
+}
 
-static void ResearchHierarchicalOnTheFlySinglePositive(benchmark::Bench& bench) { RunScenarioHierarchicalOnTheFly(bench, SCENARIO_SINGLE_POSITIVE); }
-static void ResearchHierarchicalOnTheFlyWalletLikeMulti(benchmark::Bench& bench) { RunScenarioHierarchicalOnTheFly(bench, SCENARIO_WALLET_MULTI); }
-static void ResearchHierarchicalOnTheFlyStrictNegative(benchmark::Bench& bench) { RunScenarioHierarchicalOnTheFly(bench, SCENARIO_STRICT_NEGATIVE); }
-static void ResearchHierarchicalOnTheFlyMixedPresentAbsent(benchmark::Bench& bench) { RunScenarioHierarchicalOnTheFly(bench, SCENARIO_MIXED_PRESENT_ABSENT); }
+BENCHMARK(ResearchBasicOnTheFlyTestnetRecentTenKPositiveHeavy);
+BENCHMARK(ResearchBasicOnTheFlyTestnetRecentTenKBalanced);
+BENCHMARK(ResearchBasicOnTheFlyTestnetRecentTenKNegativeHeavy);
+BENCHMARK(ResearchBasicOnTheFlyTestnetRecentTenKStrictNegative);
+BENCHMARK(ResearchBasicOnTheFlyTestnetRecentFiftyKPositiveHeavy);
+BENCHMARK(ResearchBasicOnTheFlyTestnetRecentFiftyKBalanced);
+BENCHMARK(ResearchBasicOnTheFlyTestnetRecentFiftyKNegativeHeavy);
+BENCHMARK(ResearchBasicOnTheFlyTestnetRecentFiftyKStrictNegative);
 
-BENCHMARK(ResearchBasicOnTheFlySinglePositive);
-BENCHMARK(ResearchBasicOnTheFlyWalletLikeMulti);
-BENCHMARK(ResearchBasicOnTheFlyStrictNegative);
-BENCHMARK(ResearchBasicOnTheFlyMixedPresentAbsent);
-
-BENCHMARK(ResearchHierarchicalOnTheFlySinglePositive);
-BENCHMARK(ResearchHierarchicalOnTheFlyWalletLikeMulti);
-BENCHMARK(ResearchHierarchicalOnTheFlyStrictNegative);
-BENCHMARK(ResearchHierarchicalOnTheFlyMixedPresentAbsent);
+BENCHMARK(ResearchHierarchicalOnTheFlyTestnetRecentTenKPositiveHeavy);
+BENCHMARK(ResearchHierarchicalOnTheFlyTestnetRecentTenKBalanced);
+BENCHMARK(ResearchHierarchicalOnTheFlyTestnetRecentTenKNegativeHeavy);
+BENCHMARK(ResearchHierarchicalOnTheFlyTestnetRecentTenKStrictNegative);
+BENCHMARK(ResearchHierarchicalOnTheFlyTestnetRecentFiftyKPositiveHeavy);
+BENCHMARK(ResearchHierarchicalOnTheFlyTestnetRecentFiftyKBalanced);
+BENCHMARK(ResearchHierarchicalOnTheFlyTestnetRecentFiftyKNegativeHeavy);
+BENCHMARK(ResearchHierarchicalOnTheFlyTestnetRecentFiftyKStrictNegative);
 
 } // namespace

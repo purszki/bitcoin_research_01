@@ -1,0 +1,140 @@
+Work Summary (Checkpoint)
+Date: 2026-02-27
+
+1) Data extraction and schema pipeline completed
+- Implemented and stabilized:
+  - `benchmark_tools/extract_bitcoin_data.py`
+  - `benchmark_tools/validate_data.py`
+  - `benchmark_tools/validate_scenario.py`
+  - `benchmark_tools/validate_all_scenarios.py`
+- Extractor now supports `--include-prevout-scripts` and records `spent_prevout_script_pub_keys`.
+- Regenerated `benchmark_input_data/testnet_data_tx.json` from local node data.
+
+2) BIP158 element extraction corrected
+- Updated `src/util/filter_bench.cpp`:
+  - Includes tx output scripts (excluding empty + `OP_RETURN`).
+  - Includes spent prevout scripts from inputs (excluding empty).
+- Fixed scenario/query parsing mismatches in FilterBench.
+- Verified parity: filters rebuilt from `*_tx.json` match expected BIP158 block filter hashes (no mismatches on the checked testnet slice).
+
+3) New typed dataset model introduced
+- Added:
+  - `src/util/full_dataset.h`
+  - `src/util/full_dataset.cpp`
+- `FullDataset`: JSON boundary representation.
+- `PreparedDataset`: machine-friendly representation (`uint256`, `std::vector<uint8_t>`).
+- Added conversion helpers and integrated in research bench flow.
+- Standardized byte container usage to `uint8_t`.
+
+4) PreparedDataset filter APIs added
+- Implemented:
+  - `GetBasicBlockFilters() -> std::vector<::BlockFilter>`
+  - `GetDummyBlockFilters() -> std::vector<::BlockFilterDummy>`
+  - `GetHierarchicalBlockFilters(int number_of_blocks_in_window, int L0_P, int L0_M)
+    -> std::vector<::FilterBench::HierarchicalBlockFilters>`
+
+5) Hierarchical filter PoC structures and matching path
+- Added:
+  - `src/hierarchical_blockfilters.h`
+  - `src/hierarchical_blockfilters.cpp`
+- Added `WindowBlockFilter` + `HierarchicalBlockFilters` interface and compile-safe implementation.
+- Added hierarchical lookup methods:
+  - `Match(const Element&) -> std::optional<size_t>`
+  - `MatchAny(const ElementSet&) -> std::optional<size_t>`
+- Matching strategy: check L0 window first; only on positive scan L1 block filters in that window; return first matching block index.
+
+6) Research benchmark refactor and scenario coverage expansion
+- Refactored `src/bench/research_bip158.cpp` to build filters from `PreparedDataset`, not from pre-generated filter JSON.
+- Added on-the-fly benchmark families for both basic and hierarchical paths:
+  - Single Positive
+  - Wallet-like Multi
+  - Strict Negative
+  - Mixed Present/Absent
+- Added env tunables for hierarchical runs:
+  - `HIER_WINDOW`
+  - `HIER_P`
+  - `HIER_M`
+
+7) Runtime checks and fairness observations
+- Verified `RunScenarioDummyOnTheFly` mismatch handling.
+- Current results:
+  - Hierarchical path is much faster on strict negatives.
+  - Hierarchical path is slower on positive-heavy scenarios with current parameterizations.
+- Conclusion: performance depends strongly on workload distribution and L0 parameter tuning.
+
+8) Dataset/scenario cleanup to tx-only workflow
+- Updated scenario schema/docs/contracts to make `tx_json` the required dataset input.
+- `blocks_json` is now optional (only needed for legacy/prebuilt filter workflows).
+- Updated scenario files accordingly and removed obsolete generated dataset artifacts.
+- Post-cleanup validation of all scenarios passes.
+
+9) Continuation artifacts
+- Added continuation prompt file: `light_client_research/agent_003.txt`.
+- Current benchmark execution command:
+  - `./build-release/bin/bench_bitcoin -filter='Research.*' -min-time=1000`
+- Current practical focus:
+  - tune hierarchical parameters for realistic wallet/mixed distributions,
+  - or adjust hierarchical design to reduce positive-path overhead.
+
+10) Planning and naming formalized
+- Added planning document:
+  - `light_client_research/test_set_planning.txt`
+- Documented:
+  - 10k as tuning baseline, 50k as publication-grade requirement
+  - dataset/scenario/result naming conventions
+  - quality gates and measurement protocol
+
+11) New testnet datasets extracted from running node
+- Added new folder:
+  - `light_client_research/testnet_datasets`
+- Extracted from local testnet tip (`height 4,847,556`) with prevout scripts enabled:
+  - `testnet_recent_10k_h4837557_h4847556.json`
+  - `testnet_recent_10k_h4837557_h4847556_tx.json`
+  - `testnet_recent_50k_h4797557_h4847556.json`
+  - `testnet_recent_50k_h4797557_h4847556_tx.json`
+- Dataset validation passed (`validate_data.py --tx-only` for both tx datasets).
+
+12) Scenario families generated for 10k and 50k
+- Generated 8 new scenario files (4 families per dataset):
+  - `positive_heavy`
+  - `balanced`
+  - `negative_heavy`
+  - `strict_negative`
+- Files:
+  - `scenario_testnet_recent_10k_h4837557_h4847556_tx_*.json`
+  - `scenario_testnet_recent_50k_h4797557_h4847556_tx_*.json`
+- Structural validation passed:
+  - `validate_all_scenarios.py --scenarios-dir testnet_datasets`
+- Semantic check passed:
+  - `expect_any_match` values match actual query membership on datasets.
+
+13) Research bench integration for new dataset families
+- Updated `src/bench/research_bip158.cpp`:
+  - Added benchmark registrations for all new testnet 10k/50k scenario families.
+  - Refactored scenario runners to iterate all query entries per scenario and emit per-query benchmark names:
+    - `ResearchBasicOnTheFly<ScenarioTag>Q<n>`
+    - `ResearchHierarchicalOnTheFly<ScenarioTag>Q<n>`
+
+14) Hierarchical validation/correctness fixes for 50k runs
+- Fixed L0 element extraction mismatch:
+  - `src/hierarchical_blockfilters.cpp`
+  - spent-prevout scripts now align with Basic extraction semantics (include non-empty scripts).
+- Fixed benchmark-side validation logic:
+  - `src/bench/research_bip158.cpp`
+  - expected-positive queries must not miss;
+  - expected-negative queries are not forced to equal Basic (to avoid false-positive equality assumption).
+
+15) Latest benchmark outcomes
+- 10k run with `HIER_WINDOW=24 HIER_P=12 HIER_M=1024`:
+  - Overall GM speedup (Hier vs Basic): `1.939x`
+- 50k run with same params:
+  - Overall GM speedup (Hier vs Basic): `4.282x`
+- Current best-known reported parameter set remains:
+  - `HIER_WINDOW=24`
+  - `HIER_P=12`
+  - `HIER_M=1024`
+- Repro commands used:
+  - 10k:
+    `HIER_WINDOW=24 HIER_P=12 HIER_M=1024 ./build-release/bin/bench_bitcoin -filter='Research(Basic|Hierarchical)OnTheFlyTestnetRecentTenK.*' -min-time=1000 | python3 light_client_research/benchmark_tools/compare_research_bench.py`
+  - 50k:
+    `HIER_WINDOW=24 HIER_P=12 HIER_M=1024 ./build-release/bin/bench_bitcoin -filter='Research(Basic|Hierarchical)OnTheFlyTestnetRecentFiftyK.*' -min-time=1000 | python3 light_client_research/benchmark_tools/compare_research_bench.py`

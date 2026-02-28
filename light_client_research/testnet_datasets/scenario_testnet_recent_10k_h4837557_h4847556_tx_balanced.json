@@ -1,0 +1,151 @@
+{
+  "schema_version": "1.0.0",
+  "network": "testnet",
+  "dataset_files": {
+    "tx_json": "testnet_recent_10k_h4837557_h4847556_tx.json"
+  },
+  "execution": {
+    "warmup_runs": 2,
+    "measurement_runs": 10,
+    "random_seed": 158
+  },
+  "scenario_id": "testnet_recent_10k_h4837557_h4847556_tx_balanced",
+  "description": "Auto-generated balanced scenario for testnet_recent_10k_h4837557_h4847556_tx.",
+  "queries": [
+    {
+      "query_id": "balanced_p1",
+      "label": "balanced positive 1",
+      "script_pub_keys": [
+        "001403c7963dad5cafa787faf2564cf4edc410d5ced6"
+      ],
+      "expect_any_match": true,
+      "expected_match_constraints": {
+        "min_blocks": 1
+      },
+      "notes": "Auto-generated from dataset-present scripts."
+    },
+    {
+      "query_id": "balanced_p2",
+      "label": "balanced positive 2",
+      "script_pub_keys": [
+        "0014eb38ead4ef86d7048cd8745027f6e234ad4a2a29",
+        "5120c973551752bd4f5529bddbf05fccdcc06ef85b61033a8e7f622cc6f72b8bad5c",
+        "0014d5ec5d17b18f762f94c66750587f83f4ee8224ed"
+      ],
+      "expect_any_match": true,
+      "expected_match_constraints": {
+        "min_blocks": 1
+      },
+      "notes": "Auto-generated from dataset-present scripts."
+    },
+    {
+      "query_id": "balanced_p3",
+      "label": "balanced positive 3",
+      "script_pub_keys": [
+        "00200443e1ebfb691d9e68755d3368c5e2ef86a034d746015ee3b00147f2768a66af"
+      ],
+      "expect_any_match": true,
+      "expected_match_constraints": {
+        "min_blocks": 1
+      },
+      "notes": "Auto-generated from dataset-present scripts."
+    },
+    {
+      "query_id": "balanced_p4",
+      "label": "balanced positive 4",
+      "script_pub_keys": [
+        "00147b51fdfcfc5a7b1a733b293c696d0908dc60ceed",
+        "a914f7abfbb97a66657e377cd3f71a398e803b11df1f87",
+        "001451d7c4351fb63b3f55872c37aa83bf9870051a85"
+      ],
+      "expect_any_match": true,
+      "expected_match_constraints": {
+        "min_blocks": 1
+      },
+      "notes": "Auto-generated from dataset-present scripts."
+    },
+    {
+      "query_id": "balanced_p5",
+      "label": "balanced positive 5",
+      "script_pub_keys": [
+        "512009abd9d57757b6b6da0fad73be67c449dccef483bead1b8738ce8d90fb7b84ac"
+      ],
+      "expect_any_match": true,
+      "expected_match_constraints": {
+        "min_blocks": 1
+      },
+      "notes": "Auto-generated from dataset-present scripts."
+    },
+    {
+      "query_id": "balanced_n1",
+      "label": "balanced negative 1",
+      "script_pub_keys": [
+        "6a248b761f501acc2839b3acfe73d4922e6a000e6dd94c8f07fbfab59a8cd58094e0",
+        "6a24272be45eabc50bc12eb50a3775f7a29094d2a435bbc759311605af3eb5d0f37d",
+        "6a24314dcfc85f8dc8df97017389701ef7c226dc2cf3afe023623ba8f25eac696bbf"
+      ],
+      "expect_any_match": false,
+      "expected_match_constraints": {
+        "max_blocks": 0
+      },
+      "notes": "Auto-generated absent marker scripts."
+    },
+    {
+      "query_id": "balanced_n2",
+      "label": "balanced negative 2",
+      "script_pub_keys": [
+        "6a248cbdcf442db6b3c4f4cdf5fa039b86a565e5c936a4960c50af0bdc16a9dcbd02",
+        "6a24af221bafcbe69c871476818bfce7821d3ff8aabd7402e0581c14a15bf2f62a0a",
+        "6a242f27fa61031e650e3f246b450e9dd052cc3ed70980e9b1fdbc80144c53286ff2"
+      ],
+      "expect_any_match": false,
+      "expected_match_constraints": {
+        "max_blocks": 0
+      },
+      "notes": "Auto-generated absent marker scripts."
+    },
+    {
+      "query_id": "balanced_n3",
+      "label": "balanced negative 3",
+      "script_pub_keys": [
+        "6a24677ba80f9c358fe4f880506710b847c6ddf6e22d14590a45ed4e3292a4e5ddd5",
+        "6a247c811b5dec30b9f8980b768e6e25bf7a318779ee243e020368632c2d27629b9c",
+        "6a2460cccc2320f25aff5f7fbd2060904d8c9cf1fc0434a27b80be8c85f0f2702b40"
+      ],
+      "expect_any_match": false,
+      "expected_match_constraints": {
+        "max_blocks": 0
+      },
+      "notes": "Auto-generated absent marker scripts."
+    },
+    {
+      "query_id": "balanced_n4",
+      "label": "balanced negative 4",
+      "script_pub_keys": [
+        "6a24968d334619b8c44c2388e50fbd1d777558891c74f46dc674d5ace07882b25a75",
+        "6a24e7ab2c904e3a200bc3383adb0095d04d574efc321926fba673fb9709e398a6a5",
+        "6a2464593a1deeb456ac034437aa9249a9a3bab2c585aaa6561a946f480b9e2e945e"
+      ],
+      "expect_any_match": false,
+      "expected_match_constraints": {
+        "max_blocks": 0
+      },
+      "notes": "Auto-generated absent marker scripts."
+    },
+    {
+      "query_id": "balanced_n5",
+      "label": "balanced negative 5",
+      "script_pub_keys": [
+        "6a240fd6f209544f7f0323dcf715fab8fa581e08165a3e2004848e6ae3cb6c7301b1",
+        "6a240e417daf3135bcb33c5feb02c25788249b678ea4b1d55938d46af46d24155f47",
+        "6a247eb38b0e6e8009968d46cceac16a20ab39c578fcdb8541d9900b8f0505f3690b"
+      ],
+      "expect_any_match": false,
+      "expected_match_constraints": {
+        "max_blocks": 0
+      },
+      "notes": "Auto-generated absent marker scripts."
+    }
+  ],
+  "filter_source": "tx_only"
+}

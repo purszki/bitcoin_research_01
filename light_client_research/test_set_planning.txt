@@ -1,0 +1,165 @@
+Test Set Planning For Hierarchical vs Basic Block Filter Benchmarks
+Date: 2026-02-27
+
+Goal
+- Build benchmark datasets and scenario sets that are representative enough for real-world conclusions.
+- Keep test generation and reruns practical.
+
+Why 10k blocks (baseline target)
+- 1k blocks is useful for smoke tests, but distribution is often too noisy and can be biased by local activity windows.
+- 10k blocks is a practical minimum where script/hit distributions stabilize better while still being cheap to extract and benchmark.
+- 50k+ blocks should be used for publication-grade claims once design is stable.
+
+Recommended dataset sizes by purpose
+- 1k blocks: fast development checks and compile/run sanity.
+- 10k blocks: primary tuning and algorithm comparison.
+- 50k blocks (minimum): publication-grade validation.
+
+Publication requirement
+- For publication results, include at least one 50k-block mainnet dataset and one 50k-block secondary dataset (mainnet different era or testnet).
+- 10k-block results may be reported as tuning/preliminary, but publication conclusions must be backed by 50k-block runs.
+
+Planned dataset profiles
+1) mainnet_recent_dense
+- Recent high-activity window, 10k contiguous blocks.
+- Purpose: realistic modern wallet scanning pressure.
+
+2) mainnet_mid_history
+- Older 10k contiguous window.
+- Purpose: avoid overfitting to one market/activity era.
+
+3) mainnet_sparse_period
+- Lower-activity 10k contiguous window.
+- Purpose: evaluate behavior in sparse/negative-heavy ranges.
+
+4) testnet_recent
+- Recent 10k contiguous testnet window.
+- Purpose: quick experimentation path and reproducible local iteration.
+
+Publication expansion of profiles
+- For publication track, expand at least two profiles to 50k blocks:
+  - mainnet_recent_dense_50k
+  - mainnet_mid_history_50k (or mainnet_sparse_period_50k)
+
+Notes
+- Keep each profile contiguous (single range) for reproducibility.
+- Record exact start/end heights in metadata and docs.
+
+Scenario families per dataset
+- positive_heavy: about 70% positive queries / 30% negative queries.
+- balanced: about 50% positive / 50% negative.
+- negative_heavy: about 20% positive / 80% negative.
+- strict_negative: 100% negative queries.
+
+Query construction rules
+- Use multiple query entries per scenario (not one aggregate only).
+- Mix single-key and multi-key queries.
+- Ensure positive queries have varied first-hit depth:
+  - early-hit, mid-hit, and late-hit cases.
+- Ensure negatives are not trivial duplicates; use unique absent markers.
+
+Dataset quality gates (must pass before benchmarking)
+1) Block activity shape
+- Report tx-per-block histogram.
+- Reject dataset if coinbase-only blocks dominate too heavily for chosen profile.
+
+2) Script diversity
+- Report script class distribution (p2pkh, p2wpkh, p2wsh, p2tr, p2sh, op_return, other).
+- Reject datasets that are nearly single-class unless profile explicitly targets that case.
+
+3) Prevout coverage
+- Report ratio of tx entries with spent_prevout_script_pub_keys.
+- Confirm extractor path includes prevout scripts for realistic BIP158 element sets.
+
+4) Scenario realism
+- For each query: record expected match, actual match, matching block count, and first-hit index.
+- Ensure families hit intended ratios (positive-heavy, balanced, negative-heavy, strict-negative).
+
+Benchmark comparison policy
+- Compare Basic and Hierarchical one-by-one per query id.
+- Use same scenario file and same query index for both variants.
+- Compare with geometric means:
+  - per scenario family
+  - overall across all families
+
+Measurement protocol
+- Build in release mode.
+- Use stable machine settings where possible (performance governor, tuned environment).
+- Suggested command:
+  ./build-release/bin/bench_bitcoin -filter='Research(Basic|Hierarchical)OnTheFly.*Q[1-9]' -min-time=1000
+- Post-process with:
+  python3 light_client_research/benchmark_tools/compare_research_bench.py --input <captured_output>
+
+Publication protocol additions
+- Run the same benchmark matrix on 50k datasets.
+- Report both:
+  - per-query comparisons
+  - aggregate scenario-family geometric means
+- Include confidence/variance notes and machine tuning status in publication appendix.
+
+Interpretation guidance
+- If hierarchical wins only strict-negative and loses positive-heavy/balanced by large margins, keep as optional catch-up mode only.
+- If hierarchical approaches parity in positive-heavy and clearly wins mixed/negative-heavy, consider adaptive runtime policy.
+
+Execution plan
+1) Generate new 10k datasets for all profiles with extractor.
+2) Run dataset quality report and fix profile ranges if needed.
+3) Generate scenario families per dataset with controlled query ratios.
+4) Run Basic vs Hierarchical per-query benchmarks.
+5) Rank parameter sets by:
+  - overall geometric mean speedup
+  - worst-case scenario penalty
+6) Decide deployment mode:
+  - basic-only
+  - hierarchical catch-up only
+  - adaptive switch.
+
+Publication track extension
+7) Repeat steps 1-6 on 50k datasets (minimum two profiles).
+8) Publish conclusions only from 50k track; keep 10k as development/tuning evidence.
+
+Open follow-up tooling
+- Add dataset_quality_report.py to automate quality gates and output a compact report.
+- Add scenario generator helper to enforce target positive/negative ratios and hit-depth buckets.
+
+Naming convention
+- Use profile-first, range-explicit names to keep files sortable and self-describing.
+
+1) Dataset files (tx-only)
+- Pattern:
+  <profile>_<size>_h<start>_h<end>_tx.json
+- Examples:
+  testnet_recent_10k_h123067_h133066_tx.json
+  testnet_recent_50k_h123067_h173066_tx.json
+
+2) Scenario files
+- Pattern:
+  scenario_<dataset_stem>_<family>.json
+- Family values:
+  positive_heavy
+  balanced
+  negative_heavy
+  strict_negative
+- Examples:
+  scenario_testnet_recent_10k_h123067_h133066_tx_balanced.json
+  scenario_testnet_recent_50k_h123067_h173066_tx_negative_heavy.json
+
+3) Raw benchmark outputs
+- Pattern:
+  results_<dataset_stem>_<timestamp>.txt
+- Timestamp format:
+  YYYYMMDDThhmmZ
+- Example:
+  results_testnet_recent_10k_h123067_h133066_tx_20260227T1530Z.txt
+
+4) Parsed comparison outputs
+- Pattern:
+  compare_<dataset_stem>_<timestamp>.txt
+- Example:
+  compare_testnet_recent_10k_h123067_h133066_tx_20260227T1530Z.txt
+
+5) Parameter sweep outputs
+- Pattern:
+  sweep_<dataset_stem>_w<window>_p<p>_m<m>.txt
+- Example:
+  sweep_testnet_recent_10k_h123067_h133066_tx_w24_p12_m1024.txt

@@ -19,7 +19,7 @@ def run_cmd(cmd: List[str]) -> Tuple[int, str]:
 def load_dataset_refs(scenario_path: Path) -> Tuple[Path, Path]:
     data = json.loads(scenario_path.read_text(encoding="utf-8"))
     ds = data["dataset_files"]
-    blocks = (scenario_path.parent / ds["blocks_json"]).resolve()
+    blocks = (scenario_path.parent / ds["blocks_json"]).resolve() if "blocks_json" in ds else None
     tx = (scenario_path.parent / ds["tx_json"]).resolve()
     return blocks, tx
 
@@ -65,7 +65,8 @@ def main() -> int:
             print(f"PASS scenario: {s}")
             try:
                 b, t = load_dataset_refs(s)
-                dataset_block_files.add(b)
+                if b is not None:
+                    dataset_block_files.add(b)
                 dataset_tx_files.add(t)
             except Exception as e:
                 failed += 1

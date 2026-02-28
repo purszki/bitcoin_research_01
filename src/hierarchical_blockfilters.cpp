@@ -38,7 +38,8 @@ WindowBlockFilter::WindowBlockFilter(
         elements.emplace(i.begin(), i.end());
     }
     for (const auto &i : spent_prevout_script_pub_keys) {
-        if (i.empty() || i[0] == OP_RETURN) continue;
+        // Keep spent prevouts aligned with Basic filter extraction: include non-empty scripts.
+        if (i.empty()) continue;
         elements.emplace(i.begin(), i.end());
     }
 

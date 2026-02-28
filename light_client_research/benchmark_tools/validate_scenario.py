@@ -82,14 +82,23 @@ def validate_scenario(data: Dict[str, Any], scenario_path: Path, check_datasets:
         elif net not in NETWORKS:
             add_error(errors, f"network must be one of {sorted(NETWORKS)}")
 
+    filter_source = data.get("filter_source", "tx_only")
+    if not isinstance(filter_source, str):
+        add_error(errors, "filter_source must be string")
+        filter_source = "tx_only"
+    elif filter_source not in {"tx_only", "prebuilt"}:
+        add_error(errors, "filter_source must be one of: tx_only, prebuilt")
+
     ds = data.get("dataset_files")
     ds_blocks_path: Path | None = None
     ds_tx_path: Path | None = None
     if isinstance(ds, dict):
-        if check_type(ds, "blocks_json", str, errors, "dataset_files"):
+        if "blocks_json" in ds and check_type(ds, "blocks_json", str, errors, "dataset_files"):
             ds_blocks_path = (scenario_path.parent / ds["blocks_json"]).resolve()
         if check_type(ds, "tx_json", str, errors, "dataset_files"):
             ds_tx_path = (scenario_path.parent / ds["tx_json"]).resolve()
+        if filter_source == "prebuilt" and "blocks_json" not in ds:
+            add_error(errors, "dataset_files: missing blocks_json for filter_source=prebuilt")
 
         if check_datasets:
             for label, p in (("blocks_json", ds_blocks_path), ("tx_json", ds_tx_path)):

@@ -1,0 +1,157 @@
+{
+  "schema_version": "1.0.0",
+  "network": "testnet",
+  "dataset_files": {
+    "tx_json": "testnet_recent_10k_h4837557_h4847556_tx.json"
+  },
+  "execution": {
+    "warmup_runs": 2,
+    "measurement_runs": 10,
+    "random_seed": 158
+  },
+  "scenario_id": "testnet_recent_10k_h4837557_h4847556_tx_strict_negative",
+  "description": "Auto-generated strict_negative scenario for testnet_recent_10k_h4837557_h4847556_tx.",
+  "queries": [
+    {
+      "query_id": "strict_negative_n1",
+      "label": "strict_negative negative 1",
+      "script_pub_keys": [
+        "6a248b761f501acc2839b3acfe73d4922e6a000e6dd94c8f07fbfab59a8cd58094e0",
+        "6a24272be45eabc50bc12eb50a3775f7a29094d2a435bbc759311605af3eb5d0f37d",
+        "6a24314dcfc85f8dc8df97017389701ef7c226dc2cf3afe023623ba8f25eac696bbf"
+      ],
+      "expect_any_match": false,
+      "expected_match_constraints": {
+        "max_blocks": 0
+      },
+      "notes": "Auto-generated absent marker scripts."
+    },
+    {
+      "query_id": "strict_negative_n2",
+      "label": "strict_negative negative 2",
+      "script_pub_keys": [
+        "6a248cbdcf442db6b3c4f4cdf5fa039b86a565e5c936a4960c50af0bdc16a9dcbd02",
+        "6a24af221bafcbe69c871476818bfce7821d3ff8aabd7402e0581c14a15bf2f62a0a",
+        "6a242f27fa61031e650e3f246b450e9dd052cc3ed70980e9b1fdbc80144c53286ff2"
+      ],
+      "expect_any_match": false,
+      "expected_match_constraints": {
+        "max_blocks": 0
+      },
+      "notes": "Auto-generated absent marker scripts."
+    },
+    {
+      "query_id": "strict_negative_n3",
+      "label": "strict_negative negative 3",
+      "script_pub_keys": [
+        "6a24677ba80f9c358fe4f880506710b847c6ddf6e22d14590a45ed4e3292a4e5ddd5",
+        "6a247c811b5dec30b9f8980b768e6e25bf7a318779ee243e020368632c2d27629b9c",
+        "6a2460cccc2320f25aff5f7fbd2060904d8c9cf1fc0434a27b80be8c85f0f2702b40"
+      ],
+      "expect_any_match": false,
+      "expected_match_constraints": {
+        "max_blocks": 0
+      },
+      "notes": "Auto-generated absent marker scripts."
+    },
+    {
+      "query_id": "strict_negative_n4",
+      "label": "strict_negative negative 4",
+      "script_pub_keys": [
+        "6a24968d334619b8c44c2388e50fbd1d777558891c74f46dc674d5ace07882b25a75",
+        "6a24e7ab2c904e3a200bc3383adb0095d04d574efc321926fba673fb9709e398a6a5",
+        "6a2464593a1deeb456ac034437aa9249a9a3bab2c585aaa6561a946f480b9e2e945e"
+      ],
+      "expect_any_match": false,
+      "expected_match_constraints": {
+        "max_blocks": 0
+      },
+      "notes": "Auto-generated absent marker scripts."
+    },
+    {
+      "query_id": "strict_negative_n5",
+      "label": "strict_negative negative 5",
+      "script_pub_keys": [
+        "6a240fd6f209544f7f0323dcf715fab8fa581e08165a3e2004848e6ae3cb6c7301b1",
+        "6a240e417daf3135bcb33c5feb02c25788249b678ea4b1d55938d46af46d24155f47",
+        "6a247eb38b0e6e8009968d46cceac16a20ab39c578fcdb8541d9900b8f0505f3690b"
+      ],
+      "expect_any_match": false,
+      "expected_match_constraints": {
+        "max_blocks": 0
+      },
+      "notes": "Auto-generated absent marker scripts."
+    },
+    {
+      "query_id": "strict_negative_n6",
+      "label": "strict_negative negative 6",
+      "script_pub_keys": [
+        "6a2442dc9b690eab3de439b64ac26d8c07433f6fb1b0dbc810bf1d027433f7c2250e",
+        "6a24d03aad729436a9d1c6c1548deff8eb210cc6f3a48e1ab2933f9c77f6f897069e",
+        "6a2436b30178485d9d170e95b525fd6932d8483d43b5cd55054c812764d17fa1348f"
+      ],
+      "expect_any_match": false,
+      "expected_match_constraints": {
+        "max_blocks": 0
+      },
+      "notes": "Auto-generated absent marker scripts."
+    },
+    {
+      "query_id": "strict_negative_n7",
+      "label": "strict_negative negative 7",
+      "script_pub_keys": [
+        "6a24cddba6408f8869a5ac3bc99ac69309e290eb7263f2d2bdde36bec35e9eefefdd",
+        "6a2461ee848f14ebf5cf9cbc5356b7ea39837aba497f3ac2424bdf465bb6e44c278f",
+        "6a24bf3cd7bc6f9d3129354c8642f33712ffc913a9e0ee928bf44052df2e43bbafb2"
+      ],
+      "expect_any_match": false,
+      "expected_match_constraints": {
+        "max_blocks": 0
+      },
+      "notes": "Auto-generated absent marker scripts."
+    },
+    {
+      "query_id": "strict_negative_n8",
+      "label": "strict_negative negative 8",
+      "script_pub_keys": [
+        "6a244878f73a08ea2ce0ef7d4f5bc2b018fa2f7829fb751aa6bf41c69a9227d825f6",
+        "6a24d79c0de65db28bbba63053553ff0542a40940d275ce9fff06b95d9c9df818c5e",
+        "6a24c44ad153e78ee083d303110b3f5cc2085585fcaf225d4603e4c7e497ca487199"
+      ],
+      "expect_any_match": false,
+      "expected_match_constraints": {
+        "max_blocks": 0
+      },
+      "notes": "Auto-generated absent marker scripts."
+    },
+    {
+      "query_id": "strict_negative_n9",
+      "label": "strict_negative negative 9",
+      "script_pub_keys": [
+        "6a24dffa7d81058933f423bab688b38a55d8b51e61ca0820f9f8e01913bb1ab3f717",
+        "6a243669b644dbee27c98df1b81da9822f3a796b66a83ab88cba33bf14e68523a8df",
+        "6a243206e6ee356f6970d19d4d73f0811d2ec8b7988e078da6998086c5a65481ac7e"
+      ],
+      "expect_any_match": false,
+      "expected_match_constraints": {
+        "max_blocks": 0
+      },
+      "notes": "Auto-generated absent marker scripts."
+    },
+    {
+      "query_id": "strict_negative_n10",
+      "label": "strict_negative negative 10",
+      "script_pub_keys": [
+        "6a243933b43ccd096fd256df879506db867c06e96e124946abf8980bac5cb6cc054f",
+        "6a24d60e4f67955687c32b0575f216e1b989fe4032925b528e4e7d2b8a0521444688",
+        "6a24860586bbe37db5540d97c85716ccf487fb60b92ee1b181f79d08ac9b90ac6339"
+      ],
+      "expect_any_match": false,
+      "expected_match_constraints": {
+        "max_blocks": 0
+      },
+      "notes": "Auto-generated absent marker scripts."
+    }
+  ],
+  "filter_source": "tx_only"
+}
