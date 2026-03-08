@@ -98,3 +98,26 @@ target_link_libraries(research_wallet_validate
   Boost::headers
 )
 install_binary_component(research_wallet_validate INTERNAL)
+
+add_executable(dump_demo_block
+  dump_demo_block.cpp
+)
+target_link_libraries(dump_demo_block
+  core_interface
+  test_util
+  bitcoin_node
+  univalue
+  Boost::headers
+)
+install_binary_component(dump_demo_block INTERNAL)
+
+add_executable(filter_demo
+  filter_demo.cpp
+)
+target_link_libraries(filter_demo
+  core_interface
+  test_util
+  bitcoin_node
+  Boost::headers
+)
+install_binary_component(filter_demo INTERNAL)

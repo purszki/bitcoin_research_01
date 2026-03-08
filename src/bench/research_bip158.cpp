@@ -4,6 +4,7 @@
 
 #include <bench/bench.h>
 #include <blockfilter.h>
+#include <fuse16filter.h>
 #include <hierarchical_blockfilters.h>
 #include <univalue.h>
 #include <util/filter_bench.h>
@@ -13,10 +14,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-#include <chrono>
 #include <iostream>
 #include <limits>
-#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -146,7 +145,110 @@ struct WalletScenarioData {
     return elements;
 }
 
-static void RunBinStreamingWalletScanBench(benchmark::Bench& bench, bool use_hierarchical)
+struct PreparedBlock {
+    uint256 block_hash;
+    GCSFilter::ElementSet elements;
+};
+
+[[nodiscard]] static std::vector<PreparedBlock> LoadBlocksFromBinStream(
+    const std::vector<FilterBench::BinChunkMeta>& chunk_metas,
+    std::size_t max_blocks)
+{
+    std::vector<PreparedBlock> blocks;
+    if (max_blocks > 0) blocks.reserve(max_blocks);
+    FilterBench::TxBlockStreamReader reader(chunk_metas, max_blocks);
+    while (reader.HasMore()) {
+        const auto block = reader.ReadNextBlock();
+        blocks.push_back(PreparedBlock{
+            block.block_hash,
+            ExtractElementsFromChunkBlock(block),
+        });
+    }
+    if (blocks.empty()) {
+        throw std::runtime_error("no blocks loaded from bin stream");
+    }
+    return blocks;
+}
+
+static void ValidateGroundTruth(
+    const std::vector<PreparedBlock>& blocks,
+    const WalletScenarioData& scenario,
+    const GCSFilter::ElementSet& wallet_scripts)
+{
+    if (!scenario.has_ground_truth) return;
+
+    std::unordered_set<std::size_t> candidate_match_block_indices;
+    candidate_match_block_indices.reserve(blocks.size() / 4 + 1);
+    for (std::size_t i = 0; i < blocks.size(); ++i) {
+        const PreparedBlock& block = blocks[i];
+        const GCSFilter::Params params(
+            block.block_hash.GetUint64(0),
+            block.block_hash.GetUint64(1),
+            BASIC_FILTER_P,
+            BASIC_FILTER_M);
+        const GCSFilter filter(params, block.elements);
+        if (filter.MatchAny(wallet_scripts)) {
+            candidate_match_block_indices.insert(i);
+        }
+    }
+
+    std::size_t in_range_true_hits{0};
+    std::size_t false_negative_count{0};
+    for (const std::size_t idx : scenario.ground_truth_block_indices) {
+        if (idx >= blocks.size()) continue;
+        ++in_range_true_hits;
+        if (candidate_match_block_indices.count(idx) == 0) {
+            ++false_negative_count;
+        }
+    }
+    if (false_negative_count != 0) {
+        throw std::runtime_error(
+            "ground-truth validation failed for Basic path: false negatives="
+            + std::to_string(false_negative_count)
+            + ", scenario=" + scenario.scenario_id);
+    }
+    std::cout << "BASIC_GROUND_TRUTH scenario=" << scenario.scenario_id
+              << " scanned_blocks=" << blocks.size()
+              << " true_hits_in_range=" << in_range_true_hits
+              << " candidate_matches=" << candidate_match_block_indices.size()
+              << " false_negatives=" << false_negative_count
+              << std::endl;
+}
+
+static void ResearchBasicBinStreamingWalletScan(benchmark::Bench& bench)
+{
+    const fs::path bin_dir = GetEnvPath("HIER_BIN_DIR", DEFAULT_BIN_STREAM_DIR);
+    const fs::path wallet_scenario = GetEnvPath("BIN_WALLET_SCENARIO", DEFAULT_BIN_WALLET_SCENARIO);
+    const std::size_t scan_max_blocks = GetEnvSizeT("BIN_SCAN_MAX_BLOCKS", 1000);
+
+    std::cout << "Loading bin chunks from: " << fs::PathToString(bin_dir) << std::endl;
+    std::cout << "Loading wallet scenario: " << fs::PathToString(wallet_scenario) << std::endl;
+    const std::vector<FilterBench::BinChunkMeta> chunk_metas = FilterBench::LoadBinChunkMetas(bin_dir);
+    const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
+    const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
+
+    const std::vector<PreparedBlock> blocks = LoadBlocksFromBinStream(chunk_metas, scan_max_blocks);
+    ValidateGroundTruth(blocks, scenario, wallet_scripts);
+
+    bench.name("ResearchBasicBinStreamingWalletScan");
+    bench.run([&] {
+        std::size_t match_count{0};
+        for (const PreparedBlock& block : blocks) {
+            const GCSFilter::Params params(
+                block.block_hash.GetUint64(0),
+                block.block_hash.GetUint64(1),
+                BASIC_FILTER_P,
+                BASIC_FILTER_M);
+            const GCSFilter filter(params, block.elements);
+            if (filter.MatchAny(wallet_scripts)) {
+                ++match_count;
+            }
+        }
+        ankerl::nanobench::doNotOptimizeAway(match_count);
+    });
+}
+
+static void ResearchHierarchicalBinStreamingWalletScan(benchmark::Bench& bench)
 {
     const fs::path bin_dir = GetEnvPath("HIER_BIN_DIR", DEFAULT_BIN_STREAM_DIR);
     const fs::path wallet_scenario = GetEnvPath("BIN_WALLET_SCENARIO", DEFAULT_BIN_WALLET_SCENARIO);
@@ -161,235 +263,80 @@ static void RunBinStreamingWalletScanBench(benchmark::Bench& bench, bool use_hie
     std::cout << "Loading bin chunks from: " << fs::PathToString(bin_dir) << std::endl;
     std::cout << "Loading wallet scenario: " << fs::PathToString(wallet_scenario) << std::endl;
     const std::vector<FilterBench::BinChunkMeta> chunk_metas = FilterBench::LoadBinChunkMetas(bin_dir);
-    const WalletScenarioData wallet_scenario_data = LoadWalletScenarioData(wallet_scenario);
-    const GCSFilter::ElementSet& wallet_scripts = wallet_scenario_data.wallet_scripts;
+    const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
+    const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
 
-    struct PreparedBasicBlock {
-        uint256 block_hash;
-        GCSFilter::ElementSet elements;
-    };
-
-    struct PreparedHierarchicalWindow {
+    struct PreparedWindow {
         std::size_t first_block_index;
         std::size_t last_block_index;
         GCSFilter::ElementSet window_elements;
         FilterBench::HierarchicalBlockFilters hierarchical_filters;
     };
 
-    std::vector<PreparedBasicBlock> prepared_blocks;
-    std::vector<PreparedHierarchicalWindow> prepared_windows;
-    if (!use_hierarchical) {
-        if (scan_max_blocks > 0) prepared_blocks.reserve(scan_max_blocks);
-        FilterBench::TxBlockStreamReader reader(chunk_metas, scan_max_blocks);
-        while (reader.HasMore()) {
+    std::vector<PreparedWindow> windows;
+    FilterBench::TxBlockStreamReader reader(chunk_metas, scan_max_blocks);
+    std::size_t block_index{0};
+    while (reader.HasMore()) {
+        const std::size_t first = block_index;
+        GCSFilter::ElementSet window_elements;
+        std::vector<FilterBench::HierarchicalBlockFilters::LazyBlockFilterInput> block_filter_inputs;
+        block_filter_inputs.reserve(scan_window);
+
+        for (std::size_t i = 0; i < scan_window && reader.HasMore(); ++i) {
             const auto block = reader.ReadNextBlock();
-            prepared_blocks.push_back(PreparedBasicBlock{
+            GCSFilter::ElementSet block_elements = ExtractElementsFromChunkBlock(block);
+            window_elements.insert(block_elements.begin(), block_elements.end());
+            block_filter_inputs.push_back(FilterBench::HierarchicalBlockFilters::LazyBlockFilterInput{
                 block.block_hash,
-                ExtractElementsFromChunkBlock(block),
+                std::move(block_elements),
             });
+            ++block_index;
         }
-        if (prepared_blocks.empty()) {
-            throw std::runtime_error("no blocks loaded from bin stream");
-        }
+        if (block_filter_inputs.empty()) continue;
 
-        if (wallet_scenario_data.has_ground_truth) {
-            std::unordered_set<std::size_t> candidate_match_block_indices;
-            candidate_match_block_indices.reserve(prepared_blocks.size() / 4 + 1);
-            for (std::size_t i = 0; i < prepared_blocks.size(); ++i) {
-                const PreparedBasicBlock& block = prepared_blocks[i];
-                const GCSFilter::Params params(
-                    block.block_hash.GetUint64(0),
-                    block.block_hash.GetUint64(1),
-                    BASIC_FILTER_P,
-                    BASIC_FILTER_M);
-                const GCSFilter filter(params, block.elements);
-                if (filter.MatchAny(wallet_scripts)) {
-                    candidate_match_block_indices.insert(i);
-                }
-            }
-
-            std::size_t in_range_true_hits{0};
-            std::size_t false_negative_count{0};
-            for (const std::size_t idx : wallet_scenario_data.ground_truth_block_indices) {
-                if (idx >= prepared_blocks.size()) continue;
-                ++in_range_true_hits;
-                if (candidate_match_block_indices.count(idx) == 0) {
-                    ++false_negative_count;
-                }
-            }
-            if (false_negative_count != 0) {
-                throw std::runtime_error(
-                    "ground-truth validation failed for Basic path: false negatives="
-                    + std::to_string(false_negative_count)
-                    + ", scenario=" + wallet_scenario_data.scenario_id);
-            }
-            std::cout << "BASIC_GROUND_TRUTH scenario=" << wallet_scenario_data.scenario_id
-                      << " scanned_blocks=" << prepared_blocks.size()
-                      << " true_hits_in_range=" << in_range_true_hits
-                      << " candidate_matches=" << candidate_match_block_indices.size()
-                      << " false_negatives=" << false_negative_count
-                      << std::endl;
-        }
-    } else {
-        FilterBench::TxBlockStreamReader reader(chunk_metas, scan_max_blocks);
-        std::size_t block_index{0};
-        while (reader.HasMore()) {
-            const std::size_t first = block_index;
-            GCSFilter::ElementSet window_elements;
-            std::vector<FilterBench::HierarchicalBlockFilters::LazyBlockFilterInput> block_filter_inputs;
-            block_filter_inputs.reserve(scan_window);
-
-            for (std::size_t i = 0; i < scan_window && reader.HasMore(); ++i) {
-                const auto block = reader.ReadNextBlock();
-                GCSFilter::ElementSet block_elements = ExtractElementsFromChunkBlock(block);
-                window_elements.insert(block_elements.begin(), block_elements.end());
-                block_filter_inputs.push_back(FilterBench::HierarchicalBlockFilters::LazyBlockFilterInput{
-                    block.block_hash,
-                    std::move(block_elements),
-                });
-                ++block_index;
-            }
-            if (block_filter_inputs.empty()) continue;
-
-            const std::size_t last = block_index - 1;
-            FilterBench::WindowBlockFilter l0_filter(
-                first,
-                last,
-                window_elements,
-                static_cast<uint8_t>(hier_p),
-                static_cast<uint32_t>(hier_m));
-            prepared_windows.push_back(PreparedHierarchicalWindow{
-                first,
-                last,
-                std::move(window_elements),
-                FilterBench::HierarchicalBlockFilters(first, std::move(l0_filter), std::move(block_filter_inputs)),
-            });
-        }
-        if (prepared_windows.empty()) {
-            throw std::runtime_error("no windows loaded from bin stream");
-        }
+        const std::size_t last = block_index - 1;
+        FilterBench::WindowBlockFilter l0_filter(
+            first,
+            last,
+            window_elements,
+            static_cast<uint8_t>(hier_p),
+            static_cast<uint32_t>(hier_m));
+        windows.push_back(PreparedWindow{
+            first,
+            last,
+            std::move(window_elements),
+            FilterBench::HierarchicalBlockFilters(first, std::move(l0_filter), std::move(block_filter_inputs)),
+        });
+    }
+    if (windows.empty()) {
+        throw std::runtime_error("no windows loaded from bin stream");
     }
 
-    const std::string bench_name = use_hierarchical
-        ? "ResearchHierarchicalBinStreamingWalletScan"
-        : "ResearchBasicBinStreamingWalletScan";
-    bench.name(bench_name);
-    const bool enable_basic_profile = !use_hierarchical && GetEnvInt("BASIC_PROFILE", 0) == 1;
-    uint64_t profile_filter_create_ns{0};
-    uint64_t profile_filter_match_ns{0};
-    uint64_t profile_query_prep_ns{0};
-    uint64_t profile_scans{0};
-    uint64_t profile_blocks_total{0};
-    if (use_hierarchical) {
-        for (PreparedHierarchicalWindow& window : prepared_windows) {
-            window.hierarchical_filters.ResetOuterLayerStats();
-        }
+    // Collect L0 stats from a single pass before the benchmark loop.
+    for (PreparedWindow& window : windows) {
+        window.hierarchical_filters.ResetOuterLayerStats();
     }
-    bench.run([&] {
-        std::size_t match_count{0};
-        if (!use_hierarchical) {
-            for (const PreparedBasicBlock& block : prepared_blocks) {
-                const GCSFilter::Params params(
-                    block.block_hash.GetUint64(0),
-                    block.block_hash.GetUint64(1),
-                    BASIC_FILTER_P,
-                    BASIC_FILTER_M);
-                GCSFilter filter;
-                if (enable_basic_profile) {
-                    const auto create_start = std::chrono::steady_clock::now();
-                    filter = GCSFilter(params, block.elements);
-                    const auto create_end = std::chrono::steady_clock::now();
-                    profile_filter_create_ns += static_cast<uint64_t>(
-                        std::chrono::duration_cast<std::chrono::nanoseconds>(create_end - create_start).count());
-
-                    const auto query_prep_start = std::chrono::steady_clock::now();
-                    ankerl::nanobench::doNotOptimizeAway(wallet_scripts.size());
-                    const auto query_prep_end = std::chrono::steady_clock::now();
-                    profile_query_prep_ns += static_cast<uint64_t>(
-                        std::chrono::duration_cast<std::chrono::nanoseconds>(query_prep_end - query_prep_start).count());
-
-                    const auto match_start = std::chrono::steady_clock::now();
-                    const bool matched = filter.MatchAny(wallet_scripts);
-                    const auto match_end = std::chrono::steady_clock::now();
-                    profile_filter_match_ns += static_cast<uint64_t>(
-                        std::chrono::duration_cast<std::chrono::nanoseconds>(match_end - match_start).count());
-                    if (matched) {
-                        ++match_count;
-                    }
-                } else {
-                    filter = GCSFilter(params, block.elements);
-                    if (filter.MatchAny(wallet_scripts)) {
-                        ++match_count;
-                    }
-                }
-            }
-            if (enable_basic_profile) {
-                ++profile_scans;
-                profile_blocks_total += prepared_blocks.size();
-            }
-        } else {
-            for (PreparedHierarchicalWindow& window : prepared_windows) {
-                window.hierarchical_filters.window_filter = FilterBench::WindowBlockFilter(
-                    window.first_block_index,
-                    window.last_block_index,
-                    window.window_elements,
-                    static_cast<uint8_t>(hier_p),
-                    static_cast<uint32_t>(hier_m));
-                for (auto& cached_l1 : window.hierarchical_filters.block_filters) {
-                    cached_l1.reset();
-                }
-                if (window.hierarchical_filters.MatchAny(wallet_scripts).has_value()) {
-                    ++match_count;
-                }
-            }
+    for (PreparedWindow& window : windows) {
+        window.hierarchical_filters.window_filter = FilterBench::WindowBlockFilter(
+            window.first_block_index,
+            window.last_block_index,
+            window.window_elements,
+            static_cast<uint8_t>(hier_p),
+            static_cast<uint32_t>(hier_m));
+        for (auto& cached_l1 : window.hierarchical_filters.block_filters) {
+            cached_l1.reset();
         }
-        ankerl::nanobench::doNotOptimizeAway(match_count);
-    });
-    if (enable_basic_profile && profile_blocks_total > 0) {
-        const uint64_t profile_total_ns = profile_filter_create_ns + profile_filter_match_ns + profile_query_prep_ns;
-        const double create_ratio = profile_total_ns > 0
-            ? static_cast<double>(profile_filter_create_ns) * 100.0 / static_cast<double>(profile_total_ns)
-            : 0.0;
-        const double match_ratio = profile_total_ns > 0
-            ? static_cast<double>(profile_filter_match_ns) * 100.0 / static_cast<double>(profile_total_ns)
-            : 0.0;
-        const double prep_ratio = profile_total_ns > 0
-            ? static_cast<double>(profile_query_prep_ns) * 100.0 / static_cast<double>(profile_total_ns)
-            : 0.0;
-        const double create_ns_per_block =
-            static_cast<double>(profile_filter_create_ns) / static_cast<double>(profile_blocks_total);
-        const double match_ns_per_block =
-            static_cast<double>(profile_filter_match_ns) / static_cast<double>(profile_blocks_total);
-        const double prep_ns_per_block =
-            static_cast<double>(profile_query_prep_ns) / static_cast<double>(profile_blocks_total);
-        const double total_ns_per_block =
-            static_cast<double>(profile_total_ns) / static_cast<double>(profile_blocks_total);
-        std::ostringstream oss;
-        oss << "BASIC_PROFILE scenario=" << wallet_scenario_data.scenario_id
-            << " scans=" << profile_scans
-            << " scanned_blocks_total=" << profile_blocks_total
-            << " filter_create_ns=" << profile_filter_create_ns
-            << " filter_match_ns=" << profile_filter_match_ns
-            << " query_prep_ns=" << profile_query_prep_ns
-            << " total_profiled_ns=" << profile_total_ns
-            << " filter_create_ratio_pct=" << create_ratio
-            << " filter_match_ratio_pct=" << match_ratio
-            << " query_prep_ratio_pct=" << prep_ratio
-            << " filter_create_ns_per_block=" << create_ns_per_block
-            << " filter_match_ns_per_block=" << match_ns_per_block
-            << " query_prep_ns_per_block=" << prep_ns_per_block
-            << " total_profiled_ns_per_block=" << total_ns_per_block;
-        std::cout << oss.str() << std::endl;
+        window.hierarchical_filters.MatchAny(wallet_scripts);
     }
-    if (use_hierarchical) {
+    {
         uint64_t l0_signals{0};
         uint64_t l0_false_positives{0};
-        for (const PreparedHierarchicalWindow& window : prepared_windows) {
+        for (const PreparedWindow& window : windows) {
             l0_signals += window.hierarchical_filters.GetOuterLayerSignalCount();
             l0_false_positives += window.hierarchical_filters.GetOuterLayerFalsePositiveCount();
         }
         std::ostringstream oss;
-        oss << "Hierarchical L0 stats: signals=" << l0_signals
+        oss << "Hierarchical L0 stats (single pass): signals=" << l0_signals
             << ", false_positives=" << l0_false_positives;
         if (l0_signals > 0) {
             const double fp_rate = static_cast<double>(l0_false_positives) / static_cast<double>(l0_signals);
@@ -397,19 +344,244 @@ static void RunBinStreamingWalletScanBench(benchmark::Bench& bench, bool use_hie
         }
         std::cout << oss.str() << std::endl;
     }
+
+    bench.name("ResearchHierarchicalBinStreamingWalletScan");
+    bench.run([&] {
+        std::size_t match_count{0};
+        for (PreparedWindow& window : windows) {
+            window.hierarchical_filters.window_filter = FilterBench::WindowBlockFilter(
+                window.first_block_index,
+                window.last_block_index,
+                window.window_elements,
+                static_cast<uint8_t>(hier_p),
+                static_cast<uint32_t>(hier_m));
+            for (auto& cached_l1 : window.hierarchical_filters.block_filters) {
+                cached_l1.reset();
+            }
+            if (window.hierarchical_filters.MatchAny(wallet_scripts).has_value()) {
+                ++match_count;
+            }
+        }
+        ankerl::nanobench::doNotOptimizeAway(match_count);
+    });
 }
 
-static void ResearchBasicBinStreamingWalletScan(benchmark::Bench& bench)
+static void ValidateFuse16GroundTruth(
+    const std::vector<PreparedBlock>& blocks,
+    const WalletScenarioData& scenario,
+    const GCSFilter::ElementSet& wallet_scripts)
 {
-    RunBinStreamingWalletScanBench(bench, /*use_hierarchical=*/false);
+    if (!scenario.has_ground_truth) {
+        std::cout << "FUSE16_GROUND_TRUTH scenario=" << scenario.scenario_id
+                  << " SKIPPED (no ground truth data)" << std::endl;
+        return;
+    }
+
+    std::unordered_set<std::size_t> fuse16_match_indices;
+    fuse16_match_indices.reserve(blocks.size() / 4 + 1);
+    std::size_t skipped_small{0};
+    std::size_t construction_failures{0};
+    for (std::size_t i = 0; i < blocks.size(); ++i) {
+        const PreparedBlock& block = blocks[i];
+        if (block.elements.size() < 2) {
+            ++skipped_small;
+            continue;
+        }
+        try {
+            const Fuse16Filter filter(
+                block.block_hash.GetUint64(0),
+                block.block_hash.GetUint64(1),
+                block.elements);
+            if (filter.MatchAny(wallet_scripts)) {
+                fuse16_match_indices.insert(i);
+            }
+        } catch (const std::runtime_error& e) {
+            ++construction_failures;
+            std::cerr << "\033[1;33mFUSE16 construction failed at block_index=" << i
+                      << " elements=" << block.elements.size()
+                      << ": " << e.what() << "\033[0m" << std::endl;
+        }
+    }
+
+    std::size_t in_range_true_hits{0};
+    std::size_t false_negative_count{0};
+    for (const std::size_t idx : scenario.ground_truth_block_indices) {
+        if (idx >= blocks.size()) continue;
+        ++in_range_true_hits;
+        if (fuse16_match_indices.count(idx) == 0) {
+            ++false_negative_count;
+            std::cerr << "\033[1;31m*** FUSE16 FALSE NEGATIVE at block_index=" << idx
+                      << " (elements=" << blocks[idx].elements.size() << ")\033[0m" << std::endl;
+        }
+    }
+
+    const std::size_t false_positive_count = fuse16_match_indices.size() > in_range_true_hits
+        ? fuse16_match_indices.size() - (in_range_true_hits - false_negative_count)
+        : 0;
+
+    std::cout << "FUSE16_GROUND_TRUTH scenario=" << scenario.scenario_id
+              << " scanned_blocks=" << blocks.size()
+              << " skipped_small=" << skipped_small
+              << " construction_failures=" << construction_failures
+              << " true_hits_in_range=" << in_range_true_hits
+              << " candidate_matches=" << fuse16_match_indices.size()
+              << " false_negatives=" << false_negative_count
+              << " false_positives=" << false_positive_count
+              << std::endl;
+
+    if (false_negative_count != 0) {
+        throw std::runtime_error(
+            "\033[1;31mFUSE16 GROUND-TRUTH VALIDATION FAILED: "
+            + std::to_string(false_negative_count) + " false negatives detected!"
+            + " scenario=" + scenario.scenario_id + "\033[0m");
+    }
 }
 
-static void ResearchHierarchicalBinStreamingWalletScan(benchmark::Bench& bench)
+// Standalone validation, not a benchmark. Called from client-side benchmarks during setup.
+static void RunFuse16Verification(
+    const std::vector<PreparedBlock>& blocks,
+    const WalletScenarioData& scenario,
+    const GCSFilter::ElementSet& wallet_scripts)
 {
-    RunBinStreamingWalletScanBench(bench, /*use_hierarchical=*/true);
+    ValidateGroundTruth(blocks, scenario, wallet_scripts);
+    ValidateFuse16GroundTruth(blocks, scenario, wallet_scripts);
+}
+
+struct PrebuiltGCSData {
+    GCSFilter::Params params;
+    std::vector<unsigned char> encoded;
+};
+
+struct PrebuiltFuse16Data {
+    uint64_t siphash_k0;
+    uint64_t siphash_k1;
+    std::vector<unsigned char> serialized;
+};
+
+// Shared prebuild: builds both GCS and Fuse16 filters from the same blocks.
+// A block is included only if both filters can be built successfully.
+struct ClientBenchFilters {
+    std::vector<PrebuiltGCSData> gcs;
+    std::vector<PrebuiltFuse16Data> fuse16;
+    std::size_t skipped_small{0};
+    std::size_t fuse16_construction_failures{0};
+    std::size_t gcs_total_bytes{0};
+    std::size_t fuse16_total_bytes{0};
+};
+
+[[nodiscard]] static ClientBenchFilters BuildClientBenchFilters(const std::vector<PreparedBlock>& blocks)
+{
+    ClientBenchFilters out;
+    out.gcs.reserve(blocks.size());
+    out.fuse16.reserve(blocks.size());
+
+    for (const PreparedBlock& block : blocks) {
+        if (block.elements.size() < 2) {
+            ++out.skipped_small;
+            continue;
+        }
+        const uint64_t k0 = block.block_hash.GetUint64(0);
+        const uint64_t k1 = block.block_hash.GetUint64(1);
+
+        // Try Fuse16 first — if it fails, skip this block for both.
+        std::vector<unsigned char> fuse16_serialized;
+        try {
+            Fuse16Filter fuse_filter(k0, k1, block.elements);
+            fuse16_serialized = fuse_filter.Serialize();
+        } catch (const std::runtime_error& e) {
+            ++out.fuse16_construction_failures;
+            std::cerr << "\033[1;33mFUSE16 construction failed (elements=" << block.elements.size()
+                      << "): " << e.what() << "\033[0m" << std::endl;
+            continue;
+        }
+
+        // Both succeed — add to both lists.
+        GCSFilter::Params params(k0, k1, BASIC_FILTER_P, BASIC_FILTER_M);
+        GCSFilter gcs_filter(params, block.elements);
+        out.gcs_total_bytes += gcs_filter.GetEncoded().size();
+        out.gcs.push_back(PrebuiltGCSData{params, gcs_filter.GetEncoded()});
+        out.fuse16_total_bytes += fuse16_serialized.size();
+        out.fuse16.push_back(PrebuiltFuse16Data{k0, k1, std::move(fuse16_serialized)});
+    }
+    return out;
+}
+
+static void ResearchBasicClientSideQuery(benchmark::Bench& bench)
+{
+    const fs::path bin_dir = GetEnvPath("HIER_BIN_DIR", DEFAULT_BIN_STREAM_DIR);
+    const fs::path wallet_scenario = GetEnvPath("BIN_WALLET_SCENARIO", DEFAULT_BIN_WALLET_SCENARIO);
+    const std::size_t scan_max_blocks = GetEnvSizeT("BIN_SCAN_MAX_BLOCKS", 1000);
+
+    std::cout << "[BasicClientQuery] Loading " << scan_max_blocks << " blocks..." << std::endl;
+    const std::vector<FilterBench::BinChunkMeta> chunk_metas = FilterBench::LoadBinChunkMetas(bin_dir);
+    const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
+    const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
+    const std::vector<PreparedBlock> blocks = LoadBlocksFromBinStream(chunk_metas, scan_max_blocks);
+
+    ClientBenchFilters filters = BuildClientBenchFilters(blocks);
+
+    const double total_mb = static_cast<double>(filters.gcs_total_bytes) / (1024.0 * 1024.0);
+    std::cout << "[BasicClientQuery] " << filters.gcs.size() << " GCS filters"
+              << " (skipped " << filters.skipped_small << " small, "
+              << filters.fuse16_construction_failures << " fuse16-failed)"
+              << ", total=" << filters.gcs_total_bytes << " bytes (" << total_mb << " MB)"
+              << ", avg=" << (filters.gcs.empty() ? 0 : filters.gcs_total_bytes / filters.gcs.size()) << " bytes/filter"
+              << std::endl;
+
+    bench.name("ResearchBasicClientSideQuery");
+    bench.run([&] {
+        std::size_t match_count{0};
+        for (const PrebuiltGCSData& d : filters.gcs) {
+            const GCSFilter filter(d.params, d.encoded, /*skip_decode_check=*/true);
+            if (filter.MatchAny(wallet_scripts)) {
+                ++match_count;
+            }
+        }
+        ankerl::nanobench::doNotOptimizeAway(match_count);
+    });
+}
+
+static void ResearchFuse16ClientSideQuery(benchmark::Bench& bench)
+{
+    const fs::path bin_dir = GetEnvPath("HIER_BIN_DIR", DEFAULT_BIN_STREAM_DIR);
+    const fs::path wallet_scenario = GetEnvPath("BIN_WALLET_SCENARIO", DEFAULT_BIN_WALLET_SCENARIO);
+    const std::size_t scan_max_blocks = GetEnvSizeT("BIN_SCAN_MAX_BLOCKS", 1000);
+
+    std::cout << "[Fuse16ClientQuery] Loading " << scan_max_blocks << " blocks..." << std::endl;
+    const std::vector<FilterBench::BinChunkMeta> chunk_metas = FilterBench::LoadBinChunkMetas(bin_dir);
+    const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
+    const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
+    const std::vector<PreparedBlock> blocks = LoadBlocksFromBinStream(chunk_metas, scan_max_blocks);
+
+    // Run ground-truth verification during setup.
+    RunFuse16Verification(blocks, scenario, wallet_scripts);
+
+    ClientBenchFilters filters = BuildClientBenchFilters(blocks);
+
+    const double total_mb = static_cast<double>(filters.fuse16_total_bytes) / (1024.0 * 1024.0);
+    std::cout << "[Fuse16ClientQuery] " << filters.fuse16.size() << " Fuse16 filters"
+              << " (skipped " << filters.skipped_small << " small, "
+              << filters.fuse16_construction_failures << " failed)"
+              << ", total=" << filters.fuse16_total_bytes << " bytes (" << total_mb << " MB)"
+              << ", avg=" << (filters.fuse16.empty() ? 0 : filters.fuse16_total_bytes / filters.fuse16.size()) << " bytes/filter"
+              << std::endl;
+
+    bench.name("ResearchFuse16ClientSideQuery");
+    bench.run([&] {
+        std::size_t match_count{0};
+        for (const PrebuiltFuse16Data& d : filters.fuse16) {
+            Fuse16Filter filter = Fuse16Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
+            if (filter.MatchAny(wallet_scripts)) {
+                ++match_count;
+            }
+        }
+        ankerl::nanobench::doNotOptimizeAway(match_count);
+    });
 }
 
 BENCHMARK(ResearchBasicBinStreamingWalletScan);
 BENCHMARK(ResearchHierarchicalBinStreamingWalletScan);
+BENCHMARK(ResearchBasicClientSideQuery);
+BENCHMARK(ResearchFuse16ClientSideQuery);
 
 } // namespace
