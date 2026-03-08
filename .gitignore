@@ -28,4 +28,7 @@ target/
 
 /ci/scratch/
 
-light_client_research/mainnet_datasets/mainnet_*.jso
+/light_client_research/mainnet_datasets/mainnet*.json
+/light_client_research/mainnet_datasets/mainnet*.log
+/light_client_research/mainnet_datasets/*.bin
+/light_client_research/.venv
