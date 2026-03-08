@@ -181,9 +181,11 @@ add_library(bitcoin_node STATIC EXCLUDE_FROM_ALL
   bip324.cpp
   blockencodings.cpp
   blockfilter.cpp
+  fuse8filter.cpp
   fuse16filter.cpp
   hierarchical_blockfilters.cpp
   dummyfilter.cpp
+  xor8filter.cpp
   util/full_dataset.cpp
   util/filter_bench.cpp
   util/tx_block_chunk_store.cpp

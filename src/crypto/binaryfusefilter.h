@@ -459,6 +459,185 @@ static inline bool binary_fuse8_populate(uint64_t *keys, uint32_t size,
   return true;
 }
 
+// Seeded variant of binary_fuse8_populate — accepts an explicit initial seed
+// for deterministic construction. Uses higher iteration limit (1000).
+#ifndef XOR_SEEDED_MAX_ITERATIONS
+#define XOR_SEEDED_MAX_ITERATIONS 1000
+#endif
+static inline bool binary_fuse8_populate_seeded(uint64_t *keys, uint32_t size,
+                           binary_fuse8_t *filter, uint64_t initial_seed) {
+  if (size != filter->Size) {
+    return false;
+  }
+
+  uint64_t rng_counter = initial_seed;
+  filter->Seed = binary_fuse_rng_splitmix64(&rng_counter);
+  uint64_t *reverseOrder = (uint64_t *)calloc((size + 1), sizeof(uint64_t));
+  uint32_t capacity = filter->ArrayLength;
+  uint32_t *alone = (uint32_t *)malloc(capacity * sizeof(uint32_t));
+  uint8_t *t2count = (uint8_t *)calloc(capacity, sizeof(uint8_t));
+  uint8_t *reverseH = (uint8_t *)malloc(size * sizeof(uint8_t));
+  uint64_t *t2hash = (uint64_t *)calloc(capacity, sizeof(uint64_t));
+
+  uint32_t blockBits = 1;
+  while (((uint32_t)1 << blockBits) < filter->SegmentCount) {
+    blockBits += 1;
+  }
+  uint32_t block = ((uint32_t)1 << blockBits);
+  uint32_t *startPos = (uint32_t *)malloc((1U << blockBits) * sizeof(uint32_t));
+  uint32_t h012[5];
+
+  if ((alone == NULL) || (t2count == NULL) || (reverseH == NULL) ||
+      (t2hash == NULL) || (reverseOrder == NULL) || (startPos == NULL)) {
+    free(alone);
+    free(t2count);
+    free(reverseH);
+    free(t2hash);
+    free(reverseOrder);
+    free(startPos);
+    return false;
+  }
+  reverseOrder[size] = 1;
+  for (int loop = 0; true; ++loop) {
+    if (loop + 1 > XOR_SEEDED_MAX_ITERATIONS) {
+      free(alone);
+      free(t2count);
+      free(reverseH);
+      free(t2hash);
+      free(reverseOrder);
+      free(startPos);
+      return false;
+    }
+
+    for (uint32_t i = 0; i < block; i++) {
+      startPos[i] = (uint32_t)((uint64_t)i * size) >> blockBits;
+    }
+
+    uint64_t maskblock = block - 1;
+    for (uint32_t i = 0; i < size; i++) {
+      uint64_t hash = binary_fuse_murmur64(keys[i] + filter->Seed);
+      uint64_t segment_index = hash >> (64 - blockBits);
+      while (reverseOrder[startPos[segment_index]] != 0) {
+        segment_index++;
+        segment_index &= maskblock;
+      }
+      reverseOrder[startPos[segment_index]] = hash;
+      startPos[segment_index]++;
+    }
+    int error = 0;
+    uint32_t duplicates = 0;
+    for (uint32_t i = 0; i < size; i++) {
+      uint64_t hash = reverseOrder[i];
+      uint32_t h0 = binary_fuse8_hash(0, hash, filter);
+      t2count[h0] += 4;
+      t2hash[h0] ^= hash;
+      uint32_t h1= binary_fuse8_hash(1, hash, filter);
+      t2count[h1] += 4;
+      t2count[h1] ^= 1U;
+      t2hash[h1] ^= hash;
+      uint32_t h2 = binary_fuse8_hash(2, hash, filter);
+      t2count[h2] += 4;
+      t2hash[h2] ^= hash;
+      t2count[h2] ^= 2U;
+      if ((t2hash[h0] & t2hash[h1] & t2hash[h2]) == 0) {
+        if   (((t2hash[h0] == 0) && (t2count[h0] == 8))
+          ||  ((t2hash[h1] == 0) && (t2count[h1] == 8))
+          ||  ((t2hash[h2] == 0) && (t2count[h2] == 8))) {
+					duplicates += 1;
+ 					t2count[h0] -= 4;
+ 					t2hash[h0] ^= hash;
+ 					t2count[h1] -= 4;
+ 					t2count[h1] ^= 1U;
+ 					t2hash[h1] ^= hash;
+ 					t2count[h2] -= 4;
+ 					t2count[h2] ^= 2U;
+ 					t2hash[h2] ^= hash;
+        }
+      }
+      error = (t2count[h0] < 4) ? 1 : error;
+      error = (t2count[h1] < 4) ? 1 : error;
+      error = (t2count[h2] < 4) ? 1 : error;
+    }
+    if(error) {
+      memset(reverseOrder, 0, sizeof(uint64_t) * size);
+      memset(t2count, 0, sizeof(uint8_t) * capacity);
+      memset(t2hash, 0, sizeof(uint64_t) * capacity);
+      filter->Seed = binary_fuse_rng_splitmix64(&rng_counter);
+      continue;
+    }
+
+    // End of key addition
+    uint32_t Qsize = 0;
+    for (uint32_t i = 0; i < capacity; i++) {
+      alone[Qsize] = i;
+      Qsize += ((t2count[i] >> 2U) == 1) ? 1U : 0U;
+    }
+    uint32_t stacksize = 0;
+    while (Qsize > 0) {
+      Qsize--;
+      uint32_t index = alone[Qsize];
+      if ((t2count[index] >> 2U) == 1) {
+        uint64_t hash = t2hash[index];
+
+        h012[1] = binary_fuse8_hash(1, hash, filter);
+        h012[2] = binary_fuse8_hash(2, hash, filter);
+        h012[3] = binary_fuse8_hash(0, hash, filter);
+        h012[4] = h012[1];
+        uint8_t found = t2count[index] & 3U;
+        reverseH[stacksize] = found;
+        reverseOrder[stacksize] = hash;
+        stacksize++;
+        uint32_t other_index1 = h012[found + 1];
+        alone[Qsize] = other_index1;
+        Qsize += ((t2count[other_index1] >> 2U) == 2 ? 1U : 0U);
+
+        t2count[other_index1] -= 4;
+        t2count[other_index1] ^= binary_fuse_mod3(found + 1);
+        t2hash[other_index1] ^= hash;
+
+        uint32_t other_index2 = h012[found + 2];
+        alone[Qsize] = other_index2;
+        Qsize += ((t2count[other_index2] >> 2U) == 2 ? 1U : 0U);
+        t2count[other_index2] -= 4;
+        t2count[other_index2] ^= binary_fuse_mod3(found + 2);
+        t2hash[other_index2] ^= hash;
+      }
+    }
+    if (stacksize + duplicates == size) {
+      size = stacksize;
+      break;
+    }
+    if(duplicates > 0) {
+      size = (uint32_t)binary_fuse_sort_and_remove_dup(keys, size);
+    }
+    memset(reverseOrder, 0, sizeof(uint64_t) * size);
+    memset(t2count, 0, sizeof(uint8_t) * capacity);
+    memset(t2hash, 0, sizeof(uint64_t) * capacity);
+    filter->Seed = binary_fuse_rng_splitmix64(&rng_counter);
+  }
+
+  for (uint32_t i = size - 1; i < size; i--) {
+    uint64_t hash = reverseOrder[i];
+    uint8_t xor2 = binary_fuse8_fingerprint(hash);
+    uint8_t found = reverseH[i];
+    h012[0] = binary_fuse8_hash(0, hash, filter);
+    h012[1] = binary_fuse8_hash(1, hash, filter);
+    h012[2] = binary_fuse8_hash(2, hash, filter);
+    h012[3] = h012[0];
+    h012[4] = h012[1];
+    filter->Fingerprints[h012[found]] = (uint8_t)((uint32_t)xor2 ^
+                                                  filter->Fingerprints[h012[found + 1]] ^
+                                                  filter->Fingerprints[h012[found + 2]]);
+  }
+  free(alone);
+  free(t2count);
+  free(reverseH);
+  free(t2hash);
+  free(reverseOrder);
+  free(startPos);
+  return true;
+}
+
 //////////////////
 // fuse16
 //////////////////

@@ -4,8 +4,10 @@
 
 #include <bench/bench.h>
 #include <blockfilter.h>
+#include <fuse8filter.h>
 #include <fuse16filter.h>
 #include <hierarchical_blockfilters.h>
+#include <xor8filter.h>
 #include <univalue.h>
 #include <util/filter_bench.h>
 #include <util/fs.h>
@@ -447,6 +449,148 @@ static void RunFuse16Verification(
     ValidateFuse16GroundTruth(blocks, scenario, wallet_scripts);
 }
 
+static void ValidateFuse8GroundTruth(
+    const std::vector<PreparedBlock>& blocks,
+    const WalletScenarioData& scenario,
+    const GCSFilter::ElementSet& wallet_scripts)
+{
+    if (!scenario.has_ground_truth) {
+        std::cout << "FUSE8_GROUND_TRUTH scenario=" << scenario.scenario_id
+                  << " SKIPPED (no ground truth data)" << std::endl;
+        return;
+    }
+
+    std::unordered_set<std::size_t> match_indices;
+    match_indices.reserve(blocks.size() / 4 + 1);
+    std::size_t skipped_small{0};
+    std::size_t construction_failures{0};
+    for (std::size_t i = 0; i < blocks.size(); ++i) {
+        const PreparedBlock& block = blocks[i];
+        if (block.elements.size() < 2) {
+            ++skipped_small;
+            continue;
+        }
+        try {
+            const Fuse8Filter filter(
+                block.block_hash.GetUint64(0),
+                block.block_hash.GetUint64(1),
+                block.elements);
+            if (filter.MatchAny(wallet_scripts)) {
+                match_indices.insert(i);
+            }
+        } catch (const std::runtime_error& e) {
+            ++construction_failures;
+            std::cerr << "\033[1;33mFUSE8 construction failed at block_index=" << i
+                      << " elements=" << block.elements.size()
+                      << ": " << e.what() << "\033[0m" << std::endl;
+        }
+    }
+
+    std::size_t in_range_true_hits{0};
+    std::size_t false_negative_count{0};
+    for (const std::size_t idx : scenario.ground_truth_block_indices) {
+        if (idx >= blocks.size()) continue;
+        ++in_range_true_hits;
+        if (match_indices.count(idx) == 0) {
+            ++false_negative_count;
+            std::cerr << "\033[1;31m*** FUSE8 FALSE NEGATIVE at block_index=" << idx
+                      << " (elements=" << blocks[idx].elements.size() << ")\033[0m" << std::endl;
+        }
+    }
+
+    const std::size_t false_positive_count = match_indices.size() > in_range_true_hits
+        ? match_indices.size() - (in_range_true_hits - false_negative_count)
+        : 0;
+
+    std::cout << "FUSE8_GROUND_TRUTH scenario=" << scenario.scenario_id
+              << " scanned_blocks=" << blocks.size()
+              << " skipped_small=" << skipped_small
+              << " construction_failures=" << construction_failures
+              << " true_hits_in_range=" << in_range_true_hits
+              << " candidate_matches=" << match_indices.size()
+              << " false_negatives=" << false_negative_count
+              << " false_positives=" << false_positive_count
+              << std::endl;
+
+    if (false_negative_count != 0) {
+        throw std::runtime_error(
+            "\033[1;31mFUSE8 GROUND-TRUTH VALIDATION FAILED: "
+            + std::to_string(false_negative_count) + " false negatives detected!"
+            + " scenario=" + scenario.scenario_id + "\033[0m");
+    }
+}
+
+static void ValidateXor8GroundTruth(
+    const std::vector<PreparedBlock>& blocks,
+    const WalletScenarioData& scenario,
+    const GCSFilter::ElementSet& wallet_scripts)
+{
+    if (!scenario.has_ground_truth) {
+        std::cout << "XOR8_GROUND_TRUTH scenario=" << scenario.scenario_id
+                  << " SKIPPED (no ground truth data)" << std::endl;
+        return;
+    }
+
+    std::unordered_set<std::size_t> match_indices;
+    match_indices.reserve(blocks.size() / 4 + 1);
+    std::size_t skipped_small{0};
+    std::size_t construction_failures{0};
+    for (std::size_t i = 0; i < blocks.size(); ++i) {
+        const PreparedBlock& block = blocks[i];
+        if (block.elements.empty()) {
+            ++skipped_small;
+            continue;
+        }
+        try {
+            const Xor8Filter filter(
+                block.block_hash.GetUint64(0),
+                block.block_hash.GetUint64(1),
+                block.elements);
+            if (filter.MatchAny(wallet_scripts)) {
+                match_indices.insert(i);
+            }
+        } catch (const std::runtime_error& e) {
+            ++construction_failures;
+            std::cerr << "\033[1;33mXOR8 construction failed at block_index=" << i
+                      << " elements=" << block.elements.size()
+                      << ": " << e.what() << "\033[0m" << std::endl;
+        }
+    }
+
+    std::size_t in_range_true_hits{0};
+    std::size_t false_negative_count{0};
+    for (const std::size_t idx : scenario.ground_truth_block_indices) {
+        if (idx >= blocks.size()) continue;
+        ++in_range_true_hits;
+        if (match_indices.count(idx) == 0) {
+            ++false_negative_count;
+            std::cerr << "\033[1;31m*** XOR8 FALSE NEGATIVE at block_index=" << idx
+                      << " (elements=" << blocks[idx].elements.size() << ")\033[0m" << std::endl;
+        }
+    }
+
+    const std::size_t false_positive_count = match_indices.size() > in_range_true_hits
+        ? match_indices.size() - (in_range_true_hits - false_negative_count)
+        : 0;
+
+    std::cout << "XOR8_GROUND_TRUTH scenario=" << scenario.scenario_id
+              << " scanned_blocks=" << blocks.size()
+              << " skipped_small=" << skipped_small
+              << " construction_failures=" << construction_failures
+              << " true_hits_in_range=" << in_range_true_hits
+              << " candidate_matches=" << match_indices.size()
+              << " false_negatives=" << false_negative_count
+              << " false_positives=" << false_positive_count
+              << std::endl;
+
+    if (false_negative_count != 0) {
+        throw std::runtime_error(
+            "\033[1;31mXOR8 GROUND-TRUTH VALIDATION FAILED: "
+            + std::to_string(false_negative_count) + " false negatives detected!"
+            + " scenario=" + scenario.scenario_id + "\033[0m");
+    }
+}
+
 struct PrebuiltGCSData {
     GCSFilter::Params params;
     std::vector<unsigned char> encoded;
@@ -458,15 +602,31 @@ struct PrebuiltFuse16Data {
     std::vector<unsigned char> serialized;
 };
 
-// Shared prebuild: builds both GCS and Fuse16 filters from the same blocks.
-// A block is included only if both filters can be built successfully.
+struct PrebuiltFuse8Data {
+    uint64_t siphash_k0;
+    uint64_t siphash_k1;
+    std::vector<unsigned char> serialized;
+};
+
+struct PrebuiltXor8Data {
+    uint64_t siphash_k0;
+    uint64_t siphash_k1;
+    std::vector<unsigned char> serialized;
+};
+
+// Shared prebuild: builds GCS, Fuse16, Fuse8, and Xor8 filters from the same blocks.
+// A block is included only if all filters can be built successfully.
 struct ClientBenchFilters {
     std::vector<PrebuiltGCSData> gcs;
     std::vector<PrebuiltFuse16Data> fuse16;
+    std::vector<PrebuiltFuse8Data> fuse8;
+    std::vector<PrebuiltXor8Data> xor8;
     std::size_t skipped_small{0};
-    std::size_t fuse16_construction_failures{0};
+    std::size_t construction_failures{0};
     std::size_t gcs_total_bytes{0};
     std::size_t fuse16_total_bytes{0};
+    std::size_t fuse8_total_bytes{0};
+    std::size_t xor8_total_bytes{0};
 };
 
 [[nodiscard]] static ClientBenchFilters BuildClientBenchFilters(const std::vector<PreparedBlock>& blocks)
@@ -474,6 +634,8 @@ struct ClientBenchFilters {
     ClientBenchFilters out;
     out.gcs.reserve(blocks.size());
     out.fuse16.reserve(blocks.size());
+    out.fuse8.reserve(blocks.size());
+    out.xor8.reserve(blocks.size());
 
     for (const PreparedBlock& block : blocks) {
         if (block.elements.size() < 2) {
@@ -483,25 +645,35 @@ struct ClientBenchFilters {
         const uint64_t k0 = block.block_hash.GetUint64(0);
         const uint64_t k1 = block.block_hash.GetUint64(1);
 
-        // Try Fuse16 first — if it fails, skip this block for both.
+        // Try all experimental filters — if any fail, skip this block for all.
         std::vector<unsigned char> fuse16_serialized;
+        std::vector<unsigned char> fuse8_serialized;
+        std::vector<unsigned char> xor8_serialized;
         try {
-            Fuse16Filter fuse_filter(k0, k1, block.elements);
-            fuse16_serialized = fuse_filter.Serialize();
+            Fuse16Filter fuse16(k0, k1, block.elements);
+            fuse16_serialized = fuse16.Serialize();
+            Fuse8Filter fuse8(k0, k1, block.elements);
+            fuse8_serialized = fuse8.Serialize();
+            Xor8Filter xor8(k0, k1, block.elements);
+            xor8_serialized = xor8.Serialize();
         } catch (const std::runtime_error& e) {
-            ++out.fuse16_construction_failures;
-            std::cerr << "\033[1;33mFUSE16 construction failed (elements=" << block.elements.size()
+            ++out.construction_failures;
+            std::cerr << "\033[1;33mFilter construction failed (elements=" << block.elements.size()
                       << "): " << e.what() << "\033[0m" << std::endl;
             continue;
         }
 
-        // Both succeed — add to both lists.
+        // All succeed — add to all lists.
         GCSFilter::Params params(k0, k1, BASIC_FILTER_P, BASIC_FILTER_M);
         GCSFilter gcs_filter(params, block.elements);
         out.gcs_total_bytes += gcs_filter.GetEncoded().size();
         out.gcs.push_back(PrebuiltGCSData{params, gcs_filter.GetEncoded()});
         out.fuse16_total_bytes += fuse16_serialized.size();
         out.fuse16.push_back(PrebuiltFuse16Data{k0, k1, std::move(fuse16_serialized)});
+        out.fuse8_total_bytes += fuse8_serialized.size();
+        out.fuse8.push_back(PrebuiltFuse8Data{k0, k1, std::move(fuse8_serialized)});
+        out.xor8_total_bytes += xor8_serialized.size();
+        out.xor8.push_back(PrebuiltXor8Data{k0, k1, std::move(xor8_serialized)});
     }
     return out;
 }
@@ -523,7 +695,7 @@ static void ResearchBasicClientSideQuery(benchmark::Bench& bench)
     const double total_mb = static_cast<double>(filters.gcs_total_bytes) / (1024.0 * 1024.0);
     std::cout << "[BasicClientQuery] " << filters.gcs.size() << " GCS filters"
               << " (skipped " << filters.skipped_small << " small, "
-              << filters.fuse16_construction_failures << " fuse16-failed)"
+              << filters.construction_failures << " construction-failed)"
               << ", total=" << filters.gcs_total_bytes << " bytes (" << total_mb << " MB)"
               << ", avg=" << (filters.gcs.empty() ? 0 : filters.gcs_total_bytes / filters.gcs.size()) << " bytes/filter"
               << std::endl;
@@ -561,7 +733,7 @@ static void ResearchFuse16ClientSideQuery(benchmark::Bench& bench)
     const double total_mb = static_cast<double>(filters.fuse16_total_bytes) / (1024.0 * 1024.0);
     std::cout << "[Fuse16ClientQuery] " << filters.fuse16.size() << " Fuse16 filters"
               << " (skipped " << filters.skipped_small << " small, "
-              << filters.fuse16_construction_failures << " failed)"
+              << filters.construction_failures << " failed)"
               << ", total=" << filters.fuse16_total_bytes << " bytes (" << total_mb << " MB)"
               << ", avg=" << (filters.fuse16.empty() ? 0 : filters.fuse16_total_bytes / filters.fuse16.size()) << " bytes/filter"
               << std::endl;
@@ -579,9 +751,85 @@ static void ResearchFuse16ClientSideQuery(benchmark::Bench& bench)
     });
 }
 
+static void ResearchFuse8ClientSideQuery(benchmark::Bench& bench)
+{
+    const fs::path bin_dir = GetEnvPath("HIER_BIN_DIR", DEFAULT_BIN_STREAM_DIR);
+    const fs::path wallet_scenario = GetEnvPath("BIN_WALLET_SCENARIO", DEFAULT_BIN_WALLET_SCENARIO);
+    const std::size_t scan_max_blocks = GetEnvSizeT("BIN_SCAN_MAX_BLOCKS", 1000);
+
+    std::cout << "[Fuse8ClientQuery] Loading " << scan_max_blocks << " blocks..." << std::endl;
+    const std::vector<FilterBench::BinChunkMeta> chunk_metas = FilterBench::LoadBinChunkMetas(bin_dir);
+    const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
+    const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
+    const std::vector<PreparedBlock> blocks = LoadBlocksFromBinStream(chunk_metas, scan_max_blocks);
+
+    ValidateFuse8GroundTruth(blocks, scenario, wallet_scripts);
+
+    ClientBenchFilters filters = BuildClientBenchFilters(blocks);
+
+    const double total_mb = static_cast<double>(filters.fuse8_total_bytes) / (1024.0 * 1024.0);
+    std::cout << "[Fuse8ClientQuery] " << filters.fuse8.size() << " Fuse8 filters"
+              << " (skipped " << filters.skipped_small << " small, "
+              << filters.construction_failures << " failed)"
+              << ", total=" << filters.fuse8_total_bytes << " bytes (" << total_mb << " MB)"
+              << ", avg=" << (filters.fuse8.empty() ? 0 : filters.fuse8_total_bytes / filters.fuse8.size()) << " bytes/filter"
+              << std::endl;
+
+    bench.name("ResearchFuse8ClientSideQuery");
+    bench.run([&] {
+        std::size_t match_count{0};
+        for (const PrebuiltFuse8Data& d : filters.fuse8) {
+            Fuse8Filter filter = Fuse8Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
+            if (filter.MatchAny(wallet_scripts)) {
+                ++match_count;
+            }
+        }
+        ankerl::nanobench::doNotOptimizeAway(match_count);
+    });
+}
+
+static void ResearchXor8ClientSideQuery(benchmark::Bench& bench)
+{
+    const fs::path bin_dir = GetEnvPath("HIER_BIN_DIR", DEFAULT_BIN_STREAM_DIR);
+    const fs::path wallet_scenario = GetEnvPath("BIN_WALLET_SCENARIO", DEFAULT_BIN_WALLET_SCENARIO);
+    const std::size_t scan_max_blocks = GetEnvSizeT("BIN_SCAN_MAX_BLOCKS", 1000);
+
+    std::cout << "[Xor8ClientQuery] Loading " << scan_max_blocks << " blocks..." << std::endl;
+    const std::vector<FilterBench::BinChunkMeta> chunk_metas = FilterBench::LoadBinChunkMetas(bin_dir);
+    const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
+    const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
+    const std::vector<PreparedBlock> blocks = LoadBlocksFromBinStream(chunk_metas, scan_max_blocks);
+
+    ValidateXor8GroundTruth(blocks, scenario, wallet_scripts);
+
+    ClientBenchFilters filters = BuildClientBenchFilters(blocks);
+
+    const double total_mb = static_cast<double>(filters.xor8_total_bytes) / (1024.0 * 1024.0);
+    std::cout << "[Xor8ClientQuery] " << filters.xor8.size() << " Xor8 filters"
+              << " (skipped " << filters.skipped_small << " small, "
+              << filters.construction_failures << " failed)"
+              << ", total=" << filters.xor8_total_bytes << " bytes (" << total_mb << " MB)"
+              << ", avg=" << (filters.xor8.empty() ? 0 : filters.xor8_total_bytes / filters.xor8.size()) << " bytes/filter"
+              << std::endl;
+
+    bench.name("ResearchXor8ClientSideQuery");
+    bench.run([&] {
+        std::size_t match_count{0};
+        for (const PrebuiltXor8Data& d : filters.xor8) {
+            Xor8Filter filter = Xor8Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
+            if (filter.MatchAny(wallet_scripts)) {
+                ++match_count;
+            }
+        }
+        ankerl::nanobench::doNotOptimizeAway(match_count);
+    });
+}
+
 BENCHMARK(ResearchBasicBinStreamingWalletScan);
 BENCHMARK(ResearchHierarchicalBinStreamingWalletScan);
 BENCHMARK(ResearchBasicClientSideQuery);
 BENCHMARK(ResearchFuse16ClientSideQuery);
+BENCHMARK(ResearchFuse8ClientSideQuery);
+BENCHMARK(ResearchXor8ClientSideQuery);
 
 } // namespace

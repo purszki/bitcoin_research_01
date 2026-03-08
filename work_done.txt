@@ -1,0 +1,157 @@
+================================================================================
+Work Done — Light Client Block Filter Research
+================================================================================
+Date: 2026-03-08
+Branch: research/hierarchical-block-filters
+
+================================================================================
+1. HIERARCHICAL BLOCK FILTERS (GCS-based)
+================================================================================
+
+Approach: Multi-level GCS filters over windows of blocks. L0 covers a window
+of N blocks; if L0 matches, fall through to per-block L1 filters.
+
+Results (mainnet 1k blocks, HIER_WINDOW=32, P=12, M=1024):
+  - Balanced scenario:       1.5x speedup over per-block GCS
+  - Negative-heavy scenario: 2.6x speedup
+  - Positive-heavy scenario: 1.3x speedup
+  - Strict negative:         3.5x speedup
+  - Overall geometric mean:  2.1x speedup
+
+Results (testnet 50k blocks):
+  - Overall geometric mean:  5.4x speedup
+
+Conclusion: Moderate improvement, best for negative-heavy workloads.
+Still O(N) Golomb decode per filter query.
+
+================================================================================
+2. BINARY FUSE16 FILTER (alternative to GCS)
+================================================================================
+
+Approach: Replace GCS (BIP 158) with Binary Fuse16 filters from the
+xor_singleheader library. Same SipHash-2-4 keying as BIP 158.
+
+Properties:
+  - FPR: 1/65536 (~0.0015%) — same order as GCS (1/784931)
+  - Query: O(1) per element (3 array lookups + XOR) vs O(N) Golomb decode
+  - Size: ~20 bits/element (slightly smaller than GCS ~21 bits/element)
+  - Construction: probabilistic hypergraph peeling, deterministic via
+    per-block seed derivation from SipHash
+
+Implementation:
+  - src/fuse16filter.h / .cpp — C++ wrapper around C library
+  - src/crypto/binaryfusefilter.h — C library with added seeded populate
+  - Opaque C struct storage (no C header in public .h)
+  - Safe deserialization with exact buffer size validation
+
+Ground truth verification:
+  - 1k blocks:  21 true hits, 0 false negatives, 0 false positives
+  - 20k blocks: 301 true hits, 0 false negatives, 4 false positives
+  - Zero construction failures at both 1k and 20k
+
+Benchmark results (client-side: deserialize + MatchAny, 24 wallet scripts):
+
+  1k blocks:
+  ┌──────────────┬────────────┬──────────┬───────────────┬──────────────┐
+  │ Filter       │ Time ms/it │ Size MB  │ Avg bytes/flt │ Speedup      │
+  ├──────────────┼────────────┼──────────┼───────────────┼──────────────┤
+  │ GCS (BIP158) │     232.8  │   20.1   │     21,133    │     1x       │
+  │ Fuse16       │       3.0  │   19.7   │     20,747    │    78x       │
+  └──────────────┴────────────┴──────────┴───────────────┴──────────────┘
+
+  20k blocks:
+  ┌──────────────┬────────────┬──────────┬───────────────┬────┬──────────┐
+  │ Filter       │ Time ms/it │ Size MB  │ Avg bytes/flt │ FP │ Speedup  │
+  ├──────────────┼────────────┼──────────┼───────────────┼────┼──────────┤
+  │ GCS (BIP158) │   4,716.2  │  404.2   │     21,219    │  1 │     1x   │
+  │ Fuse16       │      61.4  │  397.1   │     20,846    │  4 │    77x   │
+  └──────────────┴────────────┴──────────┴───────────────┴────┴──────────┘
+
+Network cost analysis (Fuse16 vs GCS, 20k blocks):
+  - Fuse16 saves ~7 MB in filter data (397 vs 404 MB)
+  - 3 extra false positives cause ~4.5 MB extra block downloads
+  - Net: roughly equivalent network cost, 77x faster queries
+
+Demo executable:
+  - src/bench/filter_demo.cpp — self-contained comparison with hardcoded
+    real mainnet block data. No external dataset files needed.
+  - Build: cmake --build build-release --target filter_demo
+  - Run:   ./build-release/bin/filter_demo
+
+================================================================================
+3. BINARY FUSE8 FILTER
+================================================================================
+
+Properties:
+  - FPR: 1/256 (~0.39%)
+  - Query: O(1) per element (3 array lookups + XOR)
+  - Size: ~9 bits/element (~50% of GCS/Fuse16)
+
+Implementation: src/fuse8filter.h / .cpp
+
+Benchmark results:
+
+  1k blocks:
+  ┌──────────────┬────────────┬──────────┬───────────────┬─────┬──────────┐
+  │ Filter       │ Time ms/it │ Size MB  │ Avg bytes/flt │  FP │ Speedup  │
+  ├──────────────┼────────────┼──────────┼───────────────┼─────┼──────────┤
+  │ GCS (BIP158) │     232.8  │   20.1   │     21,133    │   0 │     1x   │
+  │ Fuse8        │       2.3  │    9.9   │     10,387    │  85 │   100x   │
+  └──────────────┴────────────┴──────────┴───────────────┴─────┴──────────┘
+
+  20k blocks:
+  ┌──────────────┬────────────┬──────────┬───────────────┬──────┬──────────┐
+  │ Filter       │ Time ms/it │ Size MB  │ Avg bytes/flt │   FP │ Speedup  │
+  ├──────────────┼────────────┼──────────┼───────────────┼──────┼──────────┤
+  │ GCS (BIP158) │   4,716.2  │  404.2   │     21,219    │    1 │     1x   │
+  │ Fuse8        │      47.8  │  198.8   │     10,437    │1,733 │    99x   │
+  └──────────────┴────────────┴──────────┴───────────────┴──────┴──────────┘
+
+Network cost: saves ~200 MB in filter data but ~1,733 false positives ×
+~1.5 MB/block = ~2.6 GB extra block downloads. NOT viable.
+
+================================================================================
+4. XOR8 FILTER
+================================================================================
+
+Properties:
+  - FPR: 1/256 (~0.39%)
+  - Query: O(1) per element (3 array lookups + XOR)
+  - Size: ~9.84 bits/element (slightly larger than Fuse8)
+
+Implementation: src/xor8filter.h / .cpp, src/crypto/xorfilter.h
+
+Benchmark results:
+
+  1k blocks:
+  ┌──────────────┬────────────┬──────────┬───────────────┬─────┬──────────┐
+  │ Filter       │ Time ms/it │ Size MB  │ Avg bytes/flt │  FP │ Speedup  │
+  ├──────────────┼────────────┼──────────┼───────────────┼─────┼──────────┤
+  │ GCS (BIP158) │     232.8  │   20.1   │     21,133    │   0 │     1x   │
+  │ Xor8         │       2.2  │    9.4   │      9,923    │  84 │   107x   │
+  └──────────────┴────────────┴──────────┴───────────────┴─────┴──────────┘
+
+  20k blocks:
+  ┌──────────────┬────────────┬──────────┬───────────────┬──────┬──────────┐
+  │ Filter       │ Time ms/it │ Size MB  │ Avg bytes/flt │   FP │ Speedup  │
+  ├──────────────┼────────────┼──────────┼───────────────┼──────┼──────────┤
+  │ GCS (BIP158) │   4,716.2  │  404.2   │     21,219    │    1 │     1x   │
+  │ Xor8         │      47.1  │  189.8   │      9,963    │1,841 │   100x   │
+  └──────────────┴────────────┴──────────┴───────────────┴──────┴──────────┘
+
+Same conclusion as Fuse8: 8-bit FPR too high for practical use.
+
+================================================================================
+5. SUMMARY TABLE (20k blocks)
+================================================================================
+
+  ┌──────────────┬────────┬──────────┬───────────┬──────┬─────────┬────────────┐
+  │ Filter       │ ms/it  │ Size MB  │ bits/elem │   FP │ Speedup │ Net viable │
+  ├──────────────┼────────┼──────────┼───────────┼──────┼─────────┼────────────┤
+  │ GCS (BIP158) │4,716.2 │  404.2   │   ~21     │    1 │    1x   │ baseline   │
+  │ Fuse16       │   61.4 │  397.1   │   ~20     │    4 │   77x   │ YES        │
+  │ Fuse8        │   47.8 │  198.8   │    ~9     │1,733 │   99x   │ NO         │
+  │ Xor8         │   47.1 │  189.8   │   ~10     │1,841 │  100x   │ NO         │
+  └──────────────┴────────┴──────────┴───────────┴──────┴─────────┴────────────┘
+
+Winner: Binary Fuse16 — 77x faster, ~2% smaller, negligible FP overhead.
