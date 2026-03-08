@@ -8,6 +8,7 @@
 #include <script/script.h>
 #include <util/strencodings.h>
 
+#include <algorithm>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -34,6 +35,29 @@ static std::optional<std::string> GetOptionalString(const UniValue& obj, std::st
         throw std::runtime_error("invalid key type (expected string): " + std::string(key));
     }
     return value.get_str();
+}
+
+static GCSFilter::ElementSet ExtractBasicElements(const PreparedDataset::Block& block)
+{
+    GCSFilter::ElementSet elements;
+
+    for (const PreparedDataset::Transaction& tx : block.transactions) {
+        // Outputs: exclude empty and OP_RETURN scripts for BASIC filter.
+        for (const PreparedDataset::ByteVec& script_u8 : tx.script_pub_keys) {
+            std::vector<unsigned char> script(script_u8.begin(), script_u8.end());
+            if (script.empty() || script[0] == OP_RETURN) continue;
+            elements.insert(std::move(script));
+        }
+
+        // Spent prevouts: include non-empty scripts.
+        for (const PreparedDataset::ByteVec& script_u8 : tx.spent_prevout_script_pub_keys) {
+            std::vector<unsigned char> script(script_u8.begin(), script_u8.end());
+            if (script.empty()) continue;
+            elements.insert(std::move(script));
+        }
+    }
+
+    return elements;
 }
 
 FullDataset FullDataset::FromJson(const UniValue& json)
@@ -249,23 +273,7 @@ std::vector<::BlockFilter> PreparedDataset::GetBasicBlockFilters() const
     out.reserve(blocks.size());
 
     for (const PreparedDataset::Block& block : blocks) {
-        GCSFilter::ElementSet elements;
-
-        for (const PreparedDataset::Transaction& tx : block.transactions) {
-            // Outputs: exclude empty and OP_RETURN scripts for BASIC filter.
-            for (const PreparedDataset::ByteVec& script_u8 : tx.script_pub_keys) {
-                std::vector<unsigned char> script(script_u8.begin(), script_u8.end());
-                if (script.empty() || script[0] == OP_RETURN) continue;
-                elements.insert(std::move(script));
-            }
-
-            // Spent prevouts: include non-empty scripts.
-            for (const PreparedDataset::ByteVec& script_u8 : tx.spent_prevout_script_pub_keys) {
-                std::vector<unsigned char> script(script_u8.begin(), script_u8.end());
-                if (script.empty()) continue;
-                elements.insert(std::move(script));
-            }
-        }
+        GCSFilter::ElementSet elements = ExtractBasicElements(block);
 
         GCSFilter::Params params(
             block.block_hash.GetUint64(0),
@@ -335,38 +343,36 @@ std::vector<::FilterBench::HierarchicalBlockFilters> PreparedDataset::GetHierarc
         throw std::invalid_argument("L0_M must be > 0");
     }
 
-    HierarchicalBlockFilters result;
-    result.block_filters = GetBasicBlockFilters();
-
+    std::vector<HierarchicalBlockFilters> out;
     const std::size_t window_size = static_cast<std::size_t>(number_of_blocks_in_window);
+    out.reserve((blocks.size() + window_size - 1) / window_size);
+
     for (std::size_t first = 0; first < blocks.size(); first += window_size) {
         const std::size_t last = std::min(blocks.size() - 1, first + window_size - 1);
 
-        std::vector<std::vector<uint8_t>> script_pub_keys;
-        std::vector<std::vector<uint8_t>> spent_prevout_script_pub_keys;
+        std::vector<HierarchicalBlockFilters::LazyBlockFilterInput> block_filter_inputs;
+        block_filter_inputs.reserve(last - first + 1);
+
+        GCSFilter::ElementSet window_elements;
         for (std::size_t i = first; i <= last; ++i) {
-            for (const PreparedDataset::Transaction& tx : blocks[i].transactions) {
-                script_pub_keys.insert(script_pub_keys.end(), tx.script_pub_keys.begin(), tx.script_pub_keys.end());
-                spent_prevout_script_pub_keys.insert(
-                    spent_prevout_script_pub_keys.end(),
-                    tx.spent_prevout_script_pub_keys.begin(),
-                    tx.spent_prevout_script_pub_keys.end()
-                );
-            }
+            GCSFilter::ElementSet block_elements = ExtractBasicElements(blocks[i]);
+            window_elements.insert(block_elements.begin(), block_elements.end());
+            block_filter_inputs.push_back(HierarchicalBlockFilters::LazyBlockFilterInput{
+                blocks[i].block_hash,
+                std::move(block_elements),
+            });
         }
 
-        result.window_filters.emplace_back(
+        WindowBlockFilter window_filter(
             first,
             last,
-            script_pub_keys,
-            spent_prevout_script_pub_keys,
+            std::move(window_elements),
             static_cast<uint8_t>(L0_P),
             static_cast<uint32_t>(L0_M)
         );
+        out.emplace_back(first, std::move(window_filter), std::move(block_filter_inputs));
     }
 
-    std::vector<HierarchicalBlockFilters> out;
-    out.push_back(std::move(result));
     return out;
 }
 

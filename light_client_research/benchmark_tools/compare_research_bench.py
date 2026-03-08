@@ -17,8 +17,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-NAME_RE = re.compile(
+NAME_RE_ON_THE_FLY = re.compile(
     r"^Research(Basic|Hierarchical)OnTheFly([A-Za-z]+)Q([0-9]+)$"
+)
+NAME_RE_BIN_STREAM = re.compile(
+    r"^Research(Basic|Hierarchical)BinStreamingWalletScan$"
 )
 
 SCENARIO_ORDER = [
@@ -83,12 +86,17 @@ def main() -> int:
         if not name_match:
             continue
         bench_name = name_match.group(1)
-        n = NAME_RE.match(bench_name)
-        if not n:
-            continue
-
-        kind, scenario, q_str = n.groups()
-        q_idx = int(q_str)
+        n = NAME_RE_ON_THE_FLY.match(bench_name)
+        if n:
+            kind, scenario, q_str = n.groups()
+            q_idx = int(q_str)
+        else:
+            n_stream = NAME_RE_BIN_STREAM.match(bench_name)
+            if not n_stream:
+                continue
+            kind = n_stream.group(1)
+            scenario = "BinStreamingWalletScan"
+            q_idx = 1
 
         scenario_map = pairs.setdefault(scenario, {})
         pair = scenario_map.setdefault(q_idx, Pair())
@@ -98,7 +106,7 @@ def main() -> int:
             pair.hierarchical_ns = ns_op
 
     if not pairs:
-        print("No matching Research(Basic|Hierarchical)OnTheFly*Q* rows found.")
+        print("No matching Research(Basic|Hierarchical) benchmark rows found.")
         return 1
 
     print("Per-query comparison (speedup = Basic_ns / Hierarchical_ns; >1 means Hierarchical faster)")

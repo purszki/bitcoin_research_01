@@ -138,3 +138,215 @@ Date: 2026-02-27
     `HIER_WINDOW=24 HIER_P=12 HIER_M=1024 ./build-release/bin/bench_bitcoin -filter='Research(Basic|Hierarchical)OnTheFlyTestnetRecentTenK.*' -min-time=1000 | python3 light_client_research/benchmark_tools/compare_research_bench.py`
   - 50k:
     `HIER_WINDOW=24 HIER_P=12 HIER_M=1024 ./build-release/bin/bench_bitcoin -filter='Research(Basic|Hierarchical)OnTheFlyTestnetRecentFiftyK.*' -min-time=1000 | python3 light_client_research/benchmark_tools/compare_research_bench.py`
+
+16) Mainnet dataset preparation work
+- Added folder:
+  - `light_client_research/mainnet_datasets`
+- Moved/created dedicated config files:
+  - `light_client_research/testnet_datasets/bitcoin.conf`
+  - `light_client_research/mainnet_datasets/bitcoin.conf`
+- Fixed invalid mainnet config entry:
+  - removed `mainnet=1` from `mainnet_datasets/bitcoin.conf`
+
+17) Mainnet local node findings
+- Started mainnet node in `/home/csaba/.bitcoin-mainnet` using the new config.
+- Checked `debug.log` and confirmed:
+  - node used datadir `/home/csaba/.bitcoin-mainnet`
+  - node used config `light_client_research/mainnet_datasets/bitcoin.conf`
+  - RPC bound on `127.0.0.1:8332`
+  - node was actively pre-synchronizing headers
+- Local mainnet extraction was attempted but mainnet node later crashed due disk exhaustion:
+  - fatal LevelDB error in `/home/csaba/.bitcoin-mainnet/indexes/txindex/...`
+  - root cause: `No space left on device`
+- Conclusion recorded:
+  - current full mainnet + `txindex=1` + `blockfilterindex=1` setup needs much more disk
+  - practical estimate discussed: target about `1.5 TB` free for stable operation
+
+18) Extractor updated for remote/public RPC support
+- Updated `light_client_research/benchmark_tools/extract_bitcoin_data.py`:
+  - authentication is now optional
+  - supports unauthenticated public RPC endpoints
+  - added `User-Agent` header for public endpoint compatibility
+  - added `--source-label`
+  - dataset source now distinguishes:
+    - `bitcoin-rpc-local`
+    - `bitcoin-rpc-remote`
+  - added `--tx-only-mode`
+    - skips `getblockfilter`
+    - writes only tx dataset
+- Verified remote unauthenticated `getblockcount` works against:
+  - `https://bitcoin-rpc.publicnode.com`
+
+19) Mainnet remote extraction attempt
+- Public endpoint test succeeded:
+  - `curl https://bitcoin-rpc.publicnode.com` with `getblockcount`
+- Full remote extraction with filters failed immediately because public node does not expose `getblockfilter`:
+  - RPC error: `Index is not enabled for filtertype basic`
+- Retried with updated extractor in `--tx-only-mode`:
+  - target range:
+    - `mainnet_recent_10k_h928677_h938676_tx.json`
+  - endpoint:
+    - `https://bitcoin-rpc.publicnode.com`
+  - included `--include-prevout-scripts`
+- This long-running remote extraction later failed with transient DNS/network resolution error:
+  - `Connection error for getrawtransaction: [Errno -3] Temporary failure in name resolution`
+- Because extractor writes output only at end, no partial mainnet dataset file was produced.
+
+20) Recommended next technical step
+- Add retry logic and periodic checkpoint writes to `extract_bitcoin_data.py` before retrying long remote mainnet extraction jobs.
+
+21) Negative-query benchmark semantics corrected
+- Updated:
+  - `src/bench/research_bip158.cpp`
+- Benchmark behavior now depends on scenario ground truth:
+  - expected-positive queries still use first-match / early-exit timing
+  - expected-negative queries now do a full scan over the relevant filter set instead of stopping at the first candidate match
+- Applied symmetrically to:
+  - Basic on-the-fly benchmark path
+  - Hierarchical on-the-fly benchmark path
+- Rationale:
+  - early-exit timing is appropriate for positive existence queries because the client can stop once it has a candidate block
+  - for expected-negative queries, early exit is not a reliable measurement because a probabilistic filter can produce an early false positive and make the run appear artificially fast
+  - this effect became visible on the 50k scenario families, where one repeated absent-script query batch produced implausibly fast Basic timings due to early false-positive exit
+  - full-scan negative timing is needed to measure the real filtering work for absence queries and to avoid overweighting accidental early false positives in aggregate comparisons
+
+22) Re-ran corrected 50k benchmark after negative-query full-scan fix
+- Build verified:
+  - `cmake --build build-release --target bench_bitcoin -j4`
+- Repro command:
+  - `HIER_WINDOW=24 HIER_P=12 HIER_M=1024 ./build-release/bin/bench_bitcoin -filter='Research(Basic|Hierarchical)OnTheFlyTestnetRecentFiftyK.*' -min-time=1000`
+- Saved raw result artifact:
+  - `light_client_research/results/research_fiftyk_fullscan_negatives_20260303T220940Z_2888b17e66_raw.txt`
+- Updated 50k geometric-mean speedups after the measurement fix:
+  - `TestnetRecentFiftyKBalanced`: `5.967x`
+  - `TestnetRecentFiftyKNegativeHeavy`: `4.320x`
+  - `TestnetRecentFiftyKPositiveHeavy`: `7.689x`
+  - `TestnetRecentFiftyKStrictNegative`: `4.298x`
+  - Overall GM speedup (Hier vs Basic): `5.402x`
+- Outcome:
+  - the previous repeated negative-query outlier pattern disappeared after switching expected-negative queries to full-scan timing
+  - the corrected 50k result now reflects stable absence-query work instead of accidental early false-positive exits
+
+23) Re-ran corrected 10k benchmark after negative-query full-scan fix
+- Repro command:
+  - `HIER_WINDOW=24 HIER_P=12 HIER_M=1024 ./build-release/bin/bench_bitcoin -filter='Research(Basic|Hierarchical)OnTheFlyTestnetRecentTenK.*' -min-time=1000`
+- Saved raw result artifact:
+  - `light_client_research/results/research_tenk_fullscan_negatives_20260303T221736Z_2888b17e66_raw.txt`
+- Updated 10k geometric-mean speedups after the measurement fix:
+  - `TestnetRecentTenKBalanced`: `1.557x`
+  - `TestnetRecentTenKNegativeHeavy`: `2.133x`
+  - `TestnetRecentTenKPositiveHeavy`: `1.100x`
+  - `TestnetRecentTenKStrictNegative`: `3.366x`
+  - Overall GM speedup (Hier vs Basic): `1.873x`
+- Outcome:
+  - the old 10k headline value (`1.939x`) is superseded by the corrected full-scan-negative measurement
+  - the 10k change is modest compared with the 50k correction, but the corrected result is still the one that should be cited going forward
+
+24) Mainnet local reindex/extraction status clarified
+- Verified that the local mainnet node was able to fully re-sync after reindex.
+- Confirmed that one historical mainnet block previously failed with:
+  - `getblock <hash> 1 -> Block not found on disk`
+- Adjusted the historical 10k extraction window to skip that missing height:
+  - old failing window:
+    - `719360..729359`
+  - working historical 10k window:
+    - `721352..731351`
+
+25) Mainnet dataset extraction completed for historical 10k and recent small tip windows
+- Completed historical mainnet 10k extraction:
+  - `light_client_research/mainnet_datasets/mainnet_historical_10k_h721352_h731351.json`
+  - `light_client_research/mainnet_datasets/mainnet_historical_10k_h721352_h731351_tx.json`
+- Completed recent tip-based mainnet datasets:
+  - `mainnet_latest_0p5k_h938747_h939246.json`
+  - `mainnet_latest_0p5k_h938747_h939246_tx.json`
+  - `mainnet_latest_1k_h938247_h939246.json`
+  - `mainnet_latest_1k_h938247_h939246_tx.json`
+- Observed dataset sizes:
+  - historical 10k full JSON: about `11 GB`
+  - historical 10k tx JSON: about `11 GB`
+  - latest 0.5k full JSON: about `780 MB`
+  - latest 0.5k tx JSON: about `760 MB`
+  - latest 1k full JSON: about `1.6 GB`
+  - latest 1k tx JSON: about `1.6 GB`
+- Practical conclusion:
+  - the current monolithic pretty-printed JSON format is too large for mainnet 10k datasets to be comfortable benchmark inputs
+  - current C++ harness assumptions are acceptable for `0.5k` and `1k`, but 10k mainnet JSON is too heavy for realistic iterative benchmarking
+
+26) Mainnet 0.5k benchmark integration and first result
+- Added reusable scenario generator:
+  - `light_client_research/benchmark_tools/generate_dataset_scenarios.py`
+- Generated and validated standard scenario families for:
+  - `mainnet_latest_0p5k_h938747_h939246_tx.json`
+  - `mainnet_latest_1k_h938247_h939246_tx.json`
+- Integrated new benchmark families into:
+  - `src/bench/research_bip158.cpp`
+- Added benchmark registrations for:
+  - `Research(Basic|Hierarchical)OnTheFlyMainnetLatestHalfK*`
+  - `Research(Basic|Hierarchical)OnTheFlyMainnetLatestOneK*`
+- Rebuilt successfully:
+  - `cmake --build build-release --target bench_bitcoin -j 4`
+- Ran mainnet latest 0.5k comparison with:
+  - `./build-release/bin/bench_bitcoin -filter='Research(Basic|Hierarchical)OnTheFlyMainnetLatestHalfK.*' -min-time=1000 | python3 light_client_research/benchmark_tools/compare_research_bench.py`
+- Mainnet 0.5k result summary:
+  - Basic remained faster on early positive queries.
+  - Hierarchical was clearly faster on strict-negative queries.
+  - Hierarchical also won the later negative-heavy tails and the negative halves of balanced workloads.
+  - Interpretation:
+    - on recent mainnet `0.5k`, hierarchical already looks promising for sparse / negative-heavy scans
+    - but positive-path overhead is still visible and the result should be treated as directional, not yet a realistic end-to-end wallet estimate
+- Benchmark caveat recorded during run:
+  - machine was not tuned for publication benchmarking (`powersave` governor, CPU frequency scaling enabled, turbo enabled)
+
+27) Realistic wallet use-case generation for bin-stream benchmark redesign
+- Added generator:
+  - `light_client_research/benchmark_tools/generate_wallet_use_cases.py`
+- Generated 10 wallet use-case JSON files under:
+  - `light_client_research/mainnet_datasets/wallet_use_cases/`
+- Generated wallet profiles:
+  - `simple_user`
+  - `taproot_power_user`
+  - `custody_wallet`
+  - `exchange_hot_wallet`
+  - `merchant_batch_settler`
+  - `lightning_operator`
+  - `coinjoin_privacy_user`
+  - `legacy_migrator`
+  - `cold_storage_vault`
+  - `watch_only_auditor`
+- Each generated wallet file now includes:
+  - human-readable `title` and `description`
+  - address totals (`address_total`)
+  - active vs inactive counts in scan range
+  - address-type composition (`p2wpkh`, `p2tr`, `p2wsh`, `p2sh`, `p2pkh`)
+  - address template documentation for each script type
+  - one benchmark query containing the full tracked wallet script set
+- Data source used:
+  - `.bin` chunks from `light_client_research/mainnet_datasets/latest_50k_bins_250`
+  - detected scan range: `889327..939326` (`50,000` blocks)
+- Ground-truth generation mode:
+  - default run writes structure with `ground_truth.is_computed=false` (fast generation mode)
+  - optional full ground-truth scan can be enabled with:
+    - `--compute-ground-truth`
+- Bin-stream smoke test with generated scenario:
+  - command:
+    - `HIER_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wallet_use_case_simple_user.json HIER_BIN_DIR=light_client_research/mainnet_datasets/latest_50k_bins_250 BIN_SCAN_MAX_BLOCKS=64 ./build-release/bin/bench_bitcoin -filter='Research(Basic|Hierarchical)BinStreamingWalletScan' -min-time=1`
+  - observed smoke timings:
+    - Basic: `1,353,622,864 ns/op`
+    - Hierarchical: `1,857,721,428 ns/op`
+  - note:
+    - this was a functional smoke run (not a publication-quality measurement run)
+
+28) Hierarchical outer-layer FP investigation outcome (current status)
+- Rebuilt and re-ran bin-stream wallet benchmarks on 1k blocks with multiple parameter sweeps
+  (`SCAN_WINDOW`, `HIER_P`, `HIER_M`).
+- Added runtime logging for hierarchical L0 (window filter) signals and false positives:
+  - `signals`
+  - `false_positives`
+  - `fp_rate`
+- Observed outcome:
+  - hierarchical L0 still reports very high false-positive ratios across tested settings
+  - best tested range remained around very high FP levels and did not provide a convincing path
+    to robust gains for wallet-realistic scans
+- Conclusion:
+  - the current hierarchical direction is treated as a dead end for now due to excessive FP behavior
+    on the outer layer in the current design.

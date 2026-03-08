@@ -86,3 +86,15 @@ if(ENABLE_WALLET)
 endif()
 
 install_binary_component(bench_bitcoin INTERNAL)
+
+add_executable(research_wallet_validate
+  research_wallet_validate.cpp
+)
+target_link_libraries(research_wallet_validate
+  core_interface
+  test_util
+  bitcoin_node
+  univalue
+  Boost::headers
+)
+install_binary_component(research_wallet_validate INTERNAL)

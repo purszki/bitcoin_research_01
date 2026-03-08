@@ -185,6 +185,8 @@ add_library(bitcoin_node STATIC EXCLUDE_FROM_ALL
   dummyfilter.cpp
   util/full_dataset.cpp
   util/filter_bench.cpp
+  util/tx_block_chunk_store.cpp
+  util/tx_block_stream_reader.cpp
   consensus/tx_verify.cpp
   dbwrapper.cpp
   deploymentstatus.cpp

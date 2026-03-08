@@ -93,3 +93,27 @@ NOTES on AI usage:
  - Unit test requirement: add malformed encoded-filter deserialization test in `src/test/blockfilter_tests.cpp` that verifies rejection of filters with decoded-value overflow/out-of-range semantics (not only length/parse validity).
 
 
+REPLAN UPDATE (2026-03-05) - BIN-STREAM WALLET-SCAN MODEL
+- Keep current bench interface and command style:
+  `HIER_WINDOW=32 HIER_P=12 HIER_M=1024 BIN_SCAN_MAX_BLOCKS=64 ./build-release/bin/bench_bitcoin -filter='Research(Basic|Hierarchical)BinStreamingWalletScan' -min-time=1000 | python3 light_client_research/benchmark_tools/compare_research_bench.py`
+- Scope switch: benchmark redesign is based on lessons from current results.
+- Data source policy: from now on benchmark runs use MAINNET `.bin` datasets only.
+- Old scenario-family JSON files are replaced by wallet-focused inputs:
+  `wallet_use_case_<name>.json`
+- Each wallet use-case models a realistic wallet script set and query behavior.
+- Each wallet use-case MUST include ground truth:
+  exact block-height/block-index hits where real matches exist.
+- Primary measurement path:
+  scan 50k contiguous blocks from `.bin` chunks in streaming mode.
+- Measurement target:
+  CPU cost of client-side activity for current Compact Block Filters (BIP158 Basic)
+  and for any new candidate filter.
+- Immediate profiling focus:
+  Compact BlockFilter (BIP158 Basic) kliens oldali profilingja
+  (filter creation + matching hotspotok, költségbontás blokk/window szinten).
+- Execution model is strictly on-the-fly:
+  read next block/window from `.bin`, compute what would be received from node,
+  then run client-type matching work for that block/window.
+- Result reporting baseline per wallet use-case:
+  total scan CPU time, per-block/per-window CPU, candidate-match count,
+  and correctness against wallet_use_case ground truth (no false negatives).

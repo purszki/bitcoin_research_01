@@ -27,3 +27,5 @@ target/
 /guix-build-*
 
 /ci/scratch/
+
+light_client_research/mainnet_datasets/mainnet_*.jso
