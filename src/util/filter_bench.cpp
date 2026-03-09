@@ -4,7 +4,6 @@
 
 #include <util/filter_bench.h>
 #include <blockfilter.h>
-#include <dummyfilter.h>
 #include <script/script.h>
 #include <uint256.h>
 #include <univalue.h>
@@ -51,15 +50,9 @@ void WriteFullDataset(const FullDataset& data, const fs::path& path)
 
 std::vector<unsigned char> BuildFilter(const std::string& algo, const uint256& block_hash, const GCSFilter::ElementSet& elements)
 {
-    if (algo == "dummy") {
-        GCSFilterDummy::Params params(block_hash.GetUint64(0), block_hash.GetUint64(1), BASIC_FILTER_P, BASIC_FILTER_M);
-        GCSFilterDummy filter(params, elements);
-        return filter.GetEncoded();
-    } else {
-        GCSFilter::Params params(block_hash.GetUint64(0), block_hash.GetUint64(1), BASIC_FILTER_P, BASIC_FILTER_M);
-        GCSFilter filter(params, elements);
-        return filter.GetEncoded();
-    }
+    GCSFilter::Params params(block_hash.GetUint64(0), block_hash.GetUint64(1), BASIC_FILTER_P, BASIC_FILTER_M);
+    GCSFilter filter(params, elements);
+    return filter.GetEncoded();
 }
 
 GCSFilter::ElementSet ExtractElements(const UniValue& block_obj)
@@ -235,41 +228,6 @@ std::vector<BlockFilter> ParseFilters(const UniValue& blocks_arr)
 std::vector<BlockFilter> ParseFilters(const FullDataset& dataset)
 {
     std::vector<BlockFilter> out;
-    out.reserve(dataset.blocks.size());
-    for (const FullDataset::Block& block : dataset.blocks) {
-        if (!block.filter_hex.has_value()) {
-            throw std::runtime_error("missing filter_hex in dataset block");
-        }
-        out.emplace_back(
-            BlockFilterType::BASIC,
-            uint256::FromHex(block.block_hash).value(),
-            ParseHex(*block.filter_hex),
-            /*skip_decode_check=*/false
-        );
-    }
-    return out;
-}
-
-std::vector<BlockFilterDummy> ParseFiltersDummy(const UniValue& blocks_arr)
-{
-    std::vector<BlockFilterDummy> out;
-    out.reserve(blocks_arr.size());
-    for (const UniValue& block : blocks_arr.getValues()) {
-        const std::string block_hash_hex = block.find_value("block_hash").get_str();
-        const std::string filter_hex = block.find_value("filter_hex").get_str();
-        out.emplace_back(
-            BlockFilterType::BASIC,
-            uint256::FromHex(block_hash_hex).value(),
-            ParseHex(filter_hex),
-            /*skip_decode_check=*/false
-        );
-    }
-    return out;
-}
-
-std::vector<BlockFilterDummy> ParseFiltersDummy(const FullDataset& dataset)
-{
-    std::vector<BlockFilterDummy> out;
     out.reserve(dataset.blocks.size());
     for (const FullDataset::Block& block : dataset.blocks) {
         if (!block.filter_hex.has_value()) {

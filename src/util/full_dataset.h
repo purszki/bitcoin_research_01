@@ -6,7 +6,6 @@
 #define BITCOIN_UTIL_FULL_DATASET_H
 
 #include <blockfilter.h>
-#include <dummyfilter.h>
 #include <hierarchical_blockfilters.h>
 #include <cstdint>
 #include <uint256.h>
@@ -77,7 +76,6 @@ public:
     static PreparedDataset FromFullDataset(const FullDataset& dataset);
     FullDataset ToFullDataset() const;
     std::vector<::BlockFilter> GetBasicBlockFilters() const;
-    std::vector<::BlockFilterDummy> GetDummyBlockFilters() const;
     std::vector<::FilterBench::HierarchicalBlockFilters> GetHierarchicalBlockFilters(int number_of_blocks_in_window, int L0_P, int L0_M) const;
 };
 

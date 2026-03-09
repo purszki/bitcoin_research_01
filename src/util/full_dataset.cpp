@@ -289,44 +289,6 @@ std::vector<::BlockFilter> PreparedDataset::GetBasicBlockFilters() const
     return out;
 }
 
-std::vector<::BlockFilterDummy> PreparedDataset::GetDummyBlockFilters() const
-{
-    std::vector<::BlockFilterDummy> out;
-    out.reserve(blocks.size());
-
-    for (const PreparedDataset::Block& block : blocks) {
-        GCSFilterDummy::ElementSet elements;
-
-        for (const PreparedDataset::Transaction& tx : block.transactions) {
-            // Outputs: exclude empty and OP_RETURN scripts (same selection as BASIC).
-            for (const PreparedDataset::ByteVec& script_u8 : tx.script_pub_keys) {
-                std::vector<unsigned char> script(script_u8.begin(), script_u8.end());
-                if (script.empty() || script[0] == OP_RETURN) continue;
-                elements.insert(std::move(script));
-            }
-
-            // Spent prevouts: include non-empty scripts.
-            for (const PreparedDataset::ByteVec& script_u8 : tx.spent_prevout_script_pub_keys) {
-                std::vector<unsigned char> script(script_u8.begin(), script_u8.end());
-                if (script.empty()) continue;
-                elements.insert(std::move(script));
-            }
-        }
-
-        GCSFilterDummy::Params params(
-            block.block_hash.GetUint64(0),
-            block.block_hash.GetUint64(1),
-            BASIC_FILTER_P,
-            BASIC_FILTER_M
-        );
-        GCSFilterDummy filter(params, elements);
-        std::vector<unsigned char> encoded = filter.GetEncoded();
-        out.emplace_back(BlockFilterType::BASIC, block.block_hash, std::move(encoded), /*skip_decode_check=*/false);
-    }
-
-    return out;
-}
-
 std::vector<::FilterBench::HierarchicalBlockFilters> PreparedDataset::GetHierarchicalBlockFilters(
     int number_of_blocks_in_window,
     int L0_P,

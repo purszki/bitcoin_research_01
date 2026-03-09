@@ -6,7 +6,6 @@
 #define BITCOIN_UTIL_FILTER_BENCH_H
 
 #include <blockfilter.h>
-#include <dummyfilter.h>
 #include <uint256.h>
 #include <univalue.h>
 #include <util/full_dataset.h>
@@ -61,10 +60,6 @@ UniValue GenerateScenario(
 /** Convert a UniValue blocks array into internal BlockFilter objects. */
 std::vector<BlockFilter> ParseFilters(const UniValue& blocks_arr);
 std::vector<BlockFilter> ParseFilters(const FullDataset& dataset);
-
-/** Convert a UniValue blocks array into internal BlockFilterDummy objects. */
-std::vector<BlockFilterDummy> ParseFiltersDummy(const UniValue& blocks_arr);
-std::vector<BlockFilterDummy> ParseFiltersDummy(const FullDataset& dataset);
 
 /** Convert a UniValue 'queries' array into ElementSets. */
 std::vector<GCSFilter::ElementSet> ParseQueries(const UniValue& queries_arr);
