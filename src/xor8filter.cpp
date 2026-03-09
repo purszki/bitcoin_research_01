@@ -6,7 +6,6 @@
 
 #include <crypto/siphash.h>
 
-#include <cassert>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -14,18 +13,17 @@
 // C header — only included here, never in xor8filter.h.
 #include <crypto/xorfilter.h>
 
-static_assert(sizeof(xor8_t) <= 24, "Xor8Filter storage too small for xor8_t");
-static_assert(alignof(xor8_t) <= 8, "Xor8Filter alignment insufficient for xor8_t");
+struct Xor8Filter::Impl {
+    xor8_t filter{};
+    bool populated{false};
 
-static xor8_t* AsFilter(unsigned char* storage)
-{
-    return reinterpret_cast<xor8_t*>(storage);
-}
-
-static const xor8_t* AsFilter(const unsigned char* storage)
-{
-    return reinterpret_cast<const xor8_t*>(storage);
-}
+    ~Impl()
+    {
+        if (populated) {
+            xor8_free(&filter);
+        }
+    }
+};
 
 uint64_t Xor8Filter::HashElement(const Element& element) const
 {
@@ -34,19 +32,16 @@ uint64_t Xor8Filter::HashElement(const Element& element) const
         .Finalize();
 }
 
-void Xor8Filter::FreeFilter()
-{
-    if (m_populated) {
-        xor8_free(AsFilter(m_filter_storage));
-        m_populated = false;
-    }
-}
+Xor8Filter::Xor8Filter()
+    : m_impl{std::make_unique<Impl>()} {}
+
+Xor8Filter::~Xor8Filter() = default;
+Xor8Filter::Xor8Filter(Xor8Filter&&) noexcept = default;
+Xor8Filter& Xor8Filter::operator=(Xor8Filter&&) noexcept = default;
 
 Xor8Filter::Xor8Filter(uint64_t siphash_k0, uint64_t siphash_k1, const ElementSet& elements)
-    : m_siphash_k0(siphash_k0), m_siphash_k1(siphash_k1)
+    : m_impl{std::make_unique<Impl>()}, m_siphash_k0(siphash_k0), m_siphash_k1(siphash_k1)
 {
-    std::memset(m_filter_storage, 0, sizeof(m_filter_storage));
-
     if (elements.empty()) {
         throw std::invalid_argument("Xor8Filter requires at least 1 element");
     }
@@ -62,8 +57,7 @@ Xor8Filter::Xor8Filter(uint64_t siphash_k0, uint64_t siphash_k1, const ElementSe
         keys.push_back(HashElement(elem));
     }
 
-    xor8_t* filter = AsFilter(m_filter_storage);
-    if (!xor8_allocate(n, filter)) {
+    if (!xor8_allocate(n, &m_impl->filter)) {
         throw std::runtime_error("Xor8Filter: allocation failed");
     }
 
@@ -71,54 +65,25 @@ Xor8Filter::Xor8Filter(uint64_t siphash_k0, uint64_t siphash_k1, const ElementSe
         .Write(static_cast<uint64_t>(n))
         .Finalize();
 
-    if (!xor8_populate_seeded(keys.data(), n, filter, initial_seed)) {
-        xor8_free(filter);
+    if (!xor8_populate_seeded(keys.data(), n, &m_impl->filter, initial_seed)) {
+        xor8_free(&m_impl->filter);
         throw std::runtime_error("Xor8Filter: construction failed after max iterations");
     }
 
-    m_populated = true;
-}
-
-Xor8Filter::~Xor8Filter()
-{
-    FreeFilter();
-}
-
-Xor8Filter::Xor8Filter(Xor8Filter&& other) noexcept
-    : m_populated(other.m_populated),
-      m_siphash_k0(other.m_siphash_k0),
-      m_siphash_k1(other.m_siphash_k1)
-{
-    std::memcpy(m_filter_storage, other.m_filter_storage, sizeof(m_filter_storage));
-    std::memset(other.m_filter_storage, 0, sizeof(other.m_filter_storage));
-    other.m_populated = false;
-}
-
-Xor8Filter& Xor8Filter::operator=(Xor8Filter&& other) noexcept
-{
-    if (this != &other) {
-        FreeFilter();
-        m_siphash_k0 = other.m_siphash_k0;
-        m_siphash_k1 = other.m_siphash_k1;
-        m_populated = other.m_populated;
-        std::memcpy(m_filter_storage, other.m_filter_storage, sizeof(m_filter_storage));
-        std::memset(other.m_filter_storage, 0, sizeof(other.m_filter_storage));
-        other.m_populated = false;
-    }
-    return *this;
+    m_impl->populated = true;
 }
 
 bool Xor8Filter::Match(const Element& element) const
 {
-    if (!m_populated) return false;
+    if (!m_impl || !m_impl->populated) return false;
     const uint64_t key = HashElement(element);
-    return xor8_contain(key, AsFilter(m_filter_storage));
+    return xor8_contain(key, &m_impl->filter);
 }
 
 bool Xor8Filter::MatchAny(const ElementSet& elements) const
 {
-    if (!m_populated) return false;
-    const xor8_t* filter = AsFilter(m_filter_storage);
+    if (!m_impl || !m_impl->populated) return false;
+    const xor8_t* filter = &m_impl->filter;
     for (const Element& elem : elements) {
         const uint64_t key = HashElement(elem);
         if (xor8_contain(key, filter)) {
@@ -128,16 +93,10 @@ bool Xor8Filter::MatchAny(const ElementSet& elements) const
     return false;
 }
 
-size_t Xor8Filter::SizeInBytes() const
-{
-    if (!m_populated) return 0;
-    return xor8_size_in_bytes(AsFilter(m_filter_storage));
-}
-
 size_t Xor8Filter::SerializedSize() const
 {
-    if (!m_populated) return 0;
-    return xor8_serialization_bytes(AsFilter(m_filter_storage));
+    if (!m_impl || !m_impl->populated) return 0;
+    return xor8_serialization_bytes(&m_impl->filter);
 }
 
 std::vector<unsigned char> Xor8Filter::Serialize() const
@@ -145,7 +104,7 @@ std::vector<unsigned char> Xor8Filter::Serialize() const
     const size_t sz = SerializedSize();
     std::vector<unsigned char> buf(sz);
     if (sz > 0) {
-        xor8_serialize(AsFilter(m_filter_storage),
+        xor8_serialize(&m_impl->filter,
                        reinterpret_cast<char*>(buf.data()));
     }
     return buf;
@@ -177,11 +136,10 @@ Xor8Filter Xor8Filter::Deserialize(uint64_t siphash_k0, uint64_t siphash_k1,
     result.m_siphash_k0 = siphash_k0;
     result.m_siphash_k1 = siphash_k1;
 
-    xor8_t* filter = AsFilter(result.m_filter_storage);
-    if (!xor8_deserialize(filter,
+    if (!xor8_deserialize(&result.m_impl->filter,
                           reinterpret_cast<const char*>(data.data()))) {
         throw std::runtime_error("Xor8Filter: deserialization failed");
     }
-    result.m_populated = true;
+    result.m_impl->populated = true;
     return result;
 }

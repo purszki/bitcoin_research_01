@@ -6,7 +6,6 @@
 
 #include <crypto/siphash.h>
 
-#include <cassert>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -14,18 +13,17 @@
 // C header — only included here, never in fuse16filter.h.
 #include <crypto/binaryfusefilter.h>
 
-static_assert(sizeof(binary_fuse16_t) <= 40, "Fuse16Filter storage too small for binary_fuse16_t");
-static_assert(alignof(binary_fuse16_t) <= 8, "Fuse16Filter alignment insufficient for binary_fuse16_t");
+struct Fuse16Filter::Impl {
+    binary_fuse16_t filter{};
+    bool populated{false};
 
-static binary_fuse16_t* AsFilter(unsigned char* storage)
-{
-    return reinterpret_cast<binary_fuse16_t*>(storage);
-}
-
-static const binary_fuse16_t* AsFilter(const unsigned char* storage)
-{
-    return reinterpret_cast<const binary_fuse16_t*>(storage);
-}
+    ~Impl()
+    {
+        if (populated) {
+            binary_fuse16_free(&filter);
+        }
+    }
+};
 
 uint64_t Fuse16Filter::HashElement(const Element& element) const
 {
@@ -34,28 +32,23 @@ uint64_t Fuse16Filter::HashElement(const Element& element) const
         .Finalize();
 }
 
-void Fuse16Filter::FreeFilter()
-{
-    if (m_populated) {
-        binary_fuse16_free(AsFilter(m_filter_storage));
-        m_populated = false;
-    }
-}
+Fuse16Filter::Fuse16Filter()
+    : m_impl{std::make_unique<Impl>()} {}
+
+Fuse16Filter::~Fuse16Filter() = default;
+Fuse16Filter::Fuse16Filter(Fuse16Filter&&) noexcept = default;
+Fuse16Filter& Fuse16Filter::operator=(Fuse16Filter&&) noexcept = default;
 
 Fuse16Filter::Fuse16Filter(uint64_t siphash_k0, uint64_t siphash_k1, const ElementSet& elements)
-    : m_siphash_k0(siphash_k0), m_siphash_k1(siphash_k1)
+    : m_impl{std::make_unique<Impl>()}, m_siphash_k0(siphash_k0), m_siphash_k1(siphash_k1)
 {
-    std::memset(m_filter_storage, 0, sizeof(m_filter_storage));
-
     if (elements.size() < 2) {
+        // TODO: this issue must be handled differently
         throw std::invalid_argument("Fuse16Filter requires at least 2 elements, got "
                                     + std::to_string(elements.size()));
     }
 
-    const uint32_t n = static_cast<uint32_t>(elements.size());
-    if (static_cast<size_t>(n) != elements.size()) {
-        throw std::invalid_argument("element count exceeds uint32_t");
-    }
+    const uint32_t n = elements.size();
 
     // Hash all elements to uint64_t keys.
     std::vector<uint64_t> keys;
@@ -64,66 +57,36 @@ Fuse16Filter::Fuse16Filter(uint64_t siphash_k0, uint64_t siphash_k1, const Eleme
         keys.push_back(HashElement(elem));
     }
 
-    binary_fuse16_t* filter = AsFilter(m_filter_storage);
-    if (!binary_fuse16_allocate(n, filter)) {
+    if (!binary_fuse16_allocate(n, &m_impl->filter)) {
         throw std::runtime_error("Fuse16Filter: allocation failed");
     }
 
     // Derive initial RNG seed from the SipHash keys so each block gets
     // a different seed sequence, avoiding systematic construction failures.
+    static constexpr uint64_t seed = 0x3141592653589793;
     const uint64_t initial_seed = CSipHasher(siphash_k0, siphash_k1)
-        .Write(static_cast<uint64_t>(n))
+        .Write(seed)
         .Finalize();
 
-    if (!binary_fuse16_populate_seeded(keys.data(), n, filter, initial_seed)) {
-        binary_fuse16_free(filter);
+    if (!binary_fuse16_populate_seeded(keys.data(), n, &m_impl->filter, initial_seed)) {
+        binary_fuse16_free(&m_impl->filter);
         throw std::runtime_error("Fuse16Filter: construction failed after max iterations");
     }
 
-    m_populated = true;
-}
-
-Fuse16Filter::~Fuse16Filter()
-{
-    FreeFilter();
-}
-
-Fuse16Filter::Fuse16Filter(Fuse16Filter&& other) noexcept
-    : m_populated(other.m_populated),
-      m_siphash_k0(other.m_siphash_k0),
-      m_siphash_k1(other.m_siphash_k1)
-{
-    std::memcpy(m_filter_storage, other.m_filter_storage, sizeof(m_filter_storage));
-    // Prevent the moved-from object from freeing the fingerprint array.
-    std::memset(other.m_filter_storage, 0, sizeof(other.m_filter_storage));
-    other.m_populated = false;
-}
-
-Fuse16Filter& Fuse16Filter::operator=(Fuse16Filter&& other) noexcept
-{
-    if (this != &other) {
-        FreeFilter();
-        m_siphash_k0 = other.m_siphash_k0;
-        m_siphash_k1 = other.m_siphash_k1;
-        m_populated = other.m_populated;
-        std::memcpy(m_filter_storage, other.m_filter_storage, sizeof(m_filter_storage));
-        std::memset(other.m_filter_storage, 0, sizeof(other.m_filter_storage));
-        other.m_populated = false;
-    }
-    return *this;
+    m_impl->populated = true;
 }
 
 bool Fuse16Filter::Match(const Element& element) const
 {
-    if (!m_populated) return false;
+    if (!m_impl || !m_impl->populated) return false;
     const uint64_t key = HashElement(element);
-    return binary_fuse16_contain(key, AsFilter(m_filter_storage));
+    return binary_fuse16_contain(key, &m_impl->filter);
 }
 
 bool Fuse16Filter::MatchAny(const ElementSet& elements) const
 {
-    if (!m_populated) return false;
-    const binary_fuse16_t* filter = AsFilter(m_filter_storage);
+    if (!m_impl || !m_impl->populated) return false;
+    const binary_fuse16_t* filter = &m_impl->filter;
     for (const Element& elem : elements) {
         const uint64_t key = HashElement(elem);
         if (binary_fuse16_contain(key, filter)) {
@@ -133,23 +96,10 @@ bool Fuse16Filter::MatchAny(const ElementSet& elements) const
     return false;
 }
 
-uint32_t Fuse16Filter::GetN() const
-{
-    return AsFilter(m_filter_storage)->Size;
-}
-
-size_t Fuse16Filter::SizeInBytes() const
-{
-    if (!m_populated) return 0;
-    return binary_fuse16_size_in_bytes(AsFilter(m_filter_storage));
-}
-
 size_t Fuse16Filter::SerializedSize() const
 {
-    if (!m_populated) return 0;
-    // Cast away const — the C API doesn't take const but doesn't modify.
-    return binary_fuse16_serialization_bytes(
-        const_cast<binary_fuse16_t*>(AsFilter(m_filter_storage)));
+    if (!m_impl || !m_impl->populated) return 0;
+    return binary_fuse16_serialization_bytes(&m_impl->filter);
 }
 
 std::vector<unsigned char> Fuse16Filter::Serialize() const
@@ -157,8 +107,7 @@ std::vector<unsigned char> Fuse16Filter::Serialize() const
     const size_t sz = SerializedSize();
     std::vector<unsigned char> buf(sz);
     if (sz > 0) {
-        binary_fuse16_serialize(AsFilter(m_filter_storage),
-                                reinterpret_cast<char*>(buf.data()));
+        binary_fuse16_serialize(&m_impl->filter, reinterpret_cast<char*>(buf.data()));
     }
     return buf;
 }
@@ -192,11 +141,10 @@ Fuse16Filter Fuse16Filter::Deserialize(uint64_t siphash_k0, uint64_t siphash_k1,
     result.m_siphash_k0 = siphash_k0;
     result.m_siphash_k1 = siphash_k1;
 
-    binary_fuse16_t* filter = AsFilter(result.m_filter_storage);
-    if (!binary_fuse16_deserialize(filter,
+    if (!binary_fuse16_deserialize(&result.m_impl->filter,
                                    reinterpret_cast<const char*>(data.data()))) {
         throw std::runtime_error("Fuse16Filter: deserialization failed");
     }
-    result.m_populated = true;
+    result.m_impl->populated = true;
     return result;
 }

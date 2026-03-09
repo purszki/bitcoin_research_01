@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <unordered_set>
 #include <vector>
 
@@ -31,34 +32,26 @@ public:
     typedef std::unordered_set<Element, ByteVectorHash> ElementSet;
 
 private:
-    // Opaque storage for the C struct binary_fuse8_t (40 bytes on 64-bit).
-    alignas(8) unsigned char m_filter_storage[40]{};
-    bool m_populated{false};
+    struct Impl;
+    std::unique_ptr<Impl> m_impl;
 
     uint64_t m_siphash_k0{0};
     uint64_t m_siphash_k1{0};
 
     uint64_t HashElement(const Element& element) const;
-    void FreeFilter();
 
 public:
-    Fuse8Filter() = default;
+    Fuse8Filter();
+    ~Fuse8Filter();
+    Fuse8Filter(Fuse8Filter&&) noexcept;
+    Fuse8Filter& operator=(Fuse8Filter&&) noexcept;
 
     /** Build a filter from elements, keyed by siphash parameters. */
     Fuse8Filter(uint64_t siphash_k0, uint64_t siphash_k1, const ElementSet& elements);
 
-    ~Fuse8Filter();
-
-    Fuse8Filter(const Fuse8Filter&) = delete;
-    Fuse8Filter& operator=(const Fuse8Filter&) = delete;
-    Fuse8Filter(Fuse8Filter&& other) noexcept;
-    Fuse8Filter& operator=(Fuse8Filter&& other) noexcept;
-
     bool Match(const Element& element) const;
     bool MatchAny(const ElementSet& elements) const;
 
-    uint32_t GetN() const;
-    size_t SizeInBytes() const;
     size_t SerializedSize() const;
     std::vector<unsigned char> Serialize() const;
 

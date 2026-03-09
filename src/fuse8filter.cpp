@@ -6,7 +6,6 @@
 
 #include <crypto/siphash.h>
 
-#include <cassert>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -14,18 +13,17 @@
 // C header — only included here, never in fuse8filter.h.
 #include <crypto/binaryfusefilter.h>
 
-static_assert(sizeof(binary_fuse8_t) <= 40, "Fuse8Filter storage too small for binary_fuse8_t");
-static_assert(alignof(binary_fuse8_t) <= 8, "Fuse8Filter alignment insufficient for binary_fuse8_t");
+struct Fuse8Filter::Impl {
+    binary_fuse8_t filter{};
+    bool populated{false};
 
-static binary_fuse8_t* AsFilter(unsigned char* storage)
-{
-    return reinterpret_cast<binary_fuse8_t*>(storage);
-}
-
-static const binary_fuse8_t* AsFilter(const unsigned char* storage)
-{
-    return reinterpret_cast<const binary_fuse8_t*>(storage);
-}
+    ~Impl()
+    {
+        if (populated) {
+            binary_fuse8_free(&filter);
+        }
+    }
+};
 
 uint64_t Fuse8Filter::HashElement(const Element& element) const
 {
@@ -34,19 +32,16 @@ uint64_t Fuse8Filter::HashElement(const Element& element) const
         .Finalize();
 }
 
-void Fuse8Filter::FreeFilter()
-{
-    if (m_populated) {
-        binary_fuse8_free(AsFilter(m_filter_storage));
-        m_populated = false;
-    }
-}
+Fuse8Filter::Fuse8Filter()
+    : m_impl{std::make_unique<Impl>()} {}
+
+Fuse8Filter::~Fuse8Filter() = default;
+Fuse8Filter::Fuse8Filter(Fuse8Filter&&) noexcept = default;
+Fuse8Filter& Fuse8Filter::operator=(Fuse8Filter&&) noexcept = default;
 
 Fuse8Filter::Fuse8Filter(uint64_t siphash_k0, uint64_t siphash_k1, const ElementSet& elements)
-    : m_siphash_k0(siphash_k0), m_siphash_k1(siphash_k1)
+    : m_impl{std::make_unique<Impl>()}, m_siphash_k0(siphash_k0), m_siphash_k1(siphash_k1)
 {
-    std::memset(m_filter_storage, 0, sizeof(m_filter_storage));
-
     if (elements.size() < 2) {
         throw std::invalid_argument("Fuse8Filter requires at least 2 elements, got "
                                     + std::to_string(elements.size()));
@@ -63,8 +58,7 @@ Fuse8Filter::Fuse8Filter(uint64_t siphash_k0, uint64_t siphash_k1, const Element
         keys.push_back(HashElement(elem));
     }
 
-    binary_fuse8_t* filter = AsFilter(m_filter_storage);
-    if (!binary_fuse8_allocate(n, filter)) {
+    if (!binary_fuse8_allocate(n, &m_impl->filter)) {
         throw std::runtime_error("Fuse8Filter: allocation failed");
     }
 
@@ -72,54 +66,25 @@ Fuse8Filter::Fuse8Filter(uint64_t siphash_k0, uint64_t siphash_k1, const Element
         .Write(static_cast<uint64_t>(n))
         .Finalize();
 
-    if (!binary_fuse8_populate_seeded(keys.data(), n, filter, initial_seed)) {
-        binary_fuse8_free(filter);
+    if (!binary_fuse8_populate_seeded(keys.data(), n, &m_impl->filter, initial_seed)) {
+        binary_fuse8_free(&m_impl->filter);
         throw std::runtime_error("Fuse8Filter: construction failed after max iterations");
     }
 
-    m_populated = true;
-}
-
-Fuse8Filter::~Fuse8Filter()
-{
-    FreeFilter();
-}
-
-Fuse8Filter::Fuse8Filter(Fuse8Filter&& other) noexcept
-    : m_populated(other.m_populated),
-      m_siphash_k0(other.m_siphash_k0),
-      m_siphash_k1(other.m_siphash_k1)
-{
-    std::memcpy(m_filter_storage, other.m_filter_storage, sizeof(m_filter_storage));
-    std::memset(other.m_filter_storage, 0, sizeof(other.m_filter_storage));
-    other.m_populated = false;
-}
-
-Fuse8Filter& Fuse8Filter::operator=(Fuse8Filter&& other) noexcept
-{
-    if (this != &other) {
-        FreeFilter();
-        m_siphash_k0 = other.m_siphash_k0;
-        m_siphash_k1 = other.m_siphash_k1;
-        m_populated = other.m_populated;
-        std::memcpy(m_filter_storage, other.m_filter_storage, sizeof(m_filter_storage));
-        std::memset(other.m_filter_storage, 0, sizeof(other.m_filter_storage));
-        other.m_populated = false;
-    }
-    return *this;
+    m_impl->populated = true;
 }
 
 bool Fuse8Filter::Match(const Element& element) const
 {
-    if (!m_populated) return false;
+    if (!m_impl || !m_impl->populated) return false;
     const uint64_t key = HashElement(element);
-    return binary_fuse8_contain(key, AsFilter(m_filter_storage));
+    return binary_fuse8_contain(key, &m_impl->filter);
 }
 
 bool Fuse8Filter::MatchAny(const ElementSet& elements) const
 {
-    if (!m_populated) return false;
-    const binary_fuse8_t* filter = AsFilter(m_filter_storage);
+    if (!m_impl || !m_impl->populated) return false;
+    const binary_fuse8_t* filter = &m_impl->filter;
     for (const Element& elem : elements) {
         const uint64_t key = HashElement(elem);
         if (binary_fuse8_contain(key, filter)) {
@@ -129,21 +94,10 @@ bool Fuse8Filter::MatchAny(const ElementSet& elements) const
     return false;
 }
 
-uint32_t Fuse8Filter::GetN() const
-{
-    return AsFilter(m_filter_storage)->Size;
-}
-
-size_t Fuse8Filter::SizeInBytes() const
-{
-    if (!m_populated) return 0;
-    return binary_fuse8_size_in_bytes(AsFilter(m_filter_storage));
-}
-
 size_t Fuse8Filter::SerializedSize() const
 {
-    if (!m_populated) return 0;
-    return binary_fuse8_serialization_bytes(AsFilter(m_filter_storage));
+    if (!m_impl || !m_impl->populated) return 0;
+    return binary_fuse8_serialization_bytes(&m_impl->filter);
 }
 
 std::vector<unsigned char> Fuse8Filter::Serialize() const
@@ -151,7 +105,7 @@ std::vector<unsigned char> Fuse8Filter::Serialize() const
     const size_t sz = SerializedSize();
     std::vector<unsigned char> buf(sz);
     if (sz > 0) {
-        binary_fuse8_serialize(AsFilter(m_filter_storage),
+        binary_fuse8_serialize(&m_impl->filter,
                                reinterpret_cast<char*>(buf.data()));
     }
     return buf;
@@ -184,11 +138,10 @@ Fuse8Filter Fuse8Filter::Deserialize(uint64_t siphash_k0, uint64_t siphash_k1,
     result.m_siphash_k0 = siphash_k0;
     result.m_siphash_k1 = siphash_k1;
 
-    binary_fuse8_t* filter = AsFilter(result.m_filter_storage);
-    if (!binary_fuse8_deserialize(filter,
+    if (!binary_fuse8_deserialize(&result.m_impl->filter,
                                   reinterpret_cast<const char*>(data.data()))) {
         throw std::runtime_error("Fuse8Filter: deserialization failed");
     }
-    result.m_populated = true;
+    result.m_impl->populated = true;
     return result;
 }

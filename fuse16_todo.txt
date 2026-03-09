@@ -1,0 +1,20 @@
+# Fuse16Filter Optimization & Research TODO
+
+### Critical Errors & Production Readiness
+- [ ] **Endianness Incompatibility:** Fix `binary_fuse16_serialize` and `binary_fuse16_deserialize` to use explicit Little-Endian encoding (e.g., `ReadLE64`/`WriteLE64`) instead of `memcpy`.
+- [ ] **Struct Alignment & Portability:** Ensure `binary_fuse16_t` storage and alignment are portable across 32-bit and 64-bit architectures (current `alignas(8)` and 40-byte buffer are 64-bit centric).
+- [ ] **Small Block Handling:** Implement a fallback for blocks with 0 or 1 elements (Binary Fuse requires N >= 2). Throwing exceptions is not viable for production indexing.
+- [ ] **Unit Tests:** Add comprehensive unit tests in `src/test/` to verify construction, matching, and serialization edge cases.
+- [ ] **Memory Safety:** Replace `malloc`/`free` with `std::vector` or custom allocators that follow Bitcoin Core's `FastFactory` patterns where appropriate.
+- [ ] **API Robustness:** Add `const` qualifiers to query methods and `[[nodiscard]]` to critical allocation/population functions.
+
+### Benchmarking Improvements
+- [ ] **Fair Accuracy Comparison:** The current benchmark compares Fuse16 (FPR 1/2^16) vs GCS (FPR 1/2^19). Re-run comparisons with GCS `P=16` for an apples-to-apples accuracy vs. speed/size analysis.
+- [ ] **Isolate Query Performance:** Move `Deserialize` (malloc/memcpy) out of the inner benchmark loop in `ResearchFuse16ClientSideQuery` to measure raw query speed.
+- [ ] **GCS Re-Sorting Overhead:** Account for the fact that GCS `MatchAny` requires re-sorting query hashes for every block due to varying N, whereas Fuse16 could potentially pre-hash queries (within a block's context).
+- [ ] **Blockchain Coverage:** Ensure benchmarks include "small" blocks (N < 2) using a fallback mechanism to avoid subset selection bias.
+
+### Technical Optimization
+- [ ] **Pre-hashing:** Investigate batching SipHash calls for `MatchAny` to improve per-block query throughput.
+- [ ] **Brittle Header Sizes:** Replace hardcoded `HEADER_SIZE = 28` in `Deserialize` with a more robust calculation or constants from the C header.
+- [ ] **FPR Grinding Protection:** Evaluate if the 16-bit fingerprint is sufficiently resistant to malicious script construction (grinding for false positives) compared to BIP 158's 19-bit/20-bit parameters.

@@ -78,15 +78,74 @@ The 8-bit FPR is fundamentally too high for this use case.
 
 Results: see work_done.txt
 
+### Approach 4: Wallet Use Case Profiling (completed)
+
+Benchmarked GCS vs Fuse16 across 10 wallet use cases (24-480 scripts) on
+50k mainnet blocks to understand how speedup and FP scale with wallet size.
+
+Key findings:
+- Speedup ranges from **73x** (24 scripts) to **8x** (480 scripts)
+- GCS time is script-count-independent (O(N) Golomb decode dominates)
+- Fuse16 time scales linearly with script count (O(scripts) × O(1) per filter)
+- FP scales linearly: ~0.3 extra FP per script per 50k blocks
+- For realistic mobile wallets (24-100 scripts): 27-73x speedup, <70 FP
+- FP CPU burden is negligible; FP **bandwidth** is the real cost for large wallets
+  (up to ~4 GB for 480-script exchange wallet over full 895k chain)
+
+Fuse16 is always faster in CPU — even 480-script wallets save 11+ minutes on
+mobile over a full chain scan. But the 12x higher FPR vs GCS (1/65536 vs
+1/784931) compounds with script count and becomes a bandwidth concern at 200+
+scripts.
+
+Results: see work_done.txt (section 6) and wallet_benchmark_results_50000.txt
+
+### Approach 5: Hierarchical Fuse Filters (planned)
+
+Combine the hierarchical approach (Approach 1) with Fuse filters (Approach 2)
+to reduce false positives, particularly for large wallets.
+
+**Motivation**: Fuse16's FPR (1/65536) is 12x higher than GCS (1/784931).
+For wallets with many scripts, this causes significant extra bandwidth. A
+hierarchical structure can dramatically reduce effective FPR without increasing
+fingerprint size.
+
+**Concept**: L0 Fuse filter covers a window of N blocks (e.g., 32). If L0
+says "no match", skip the entire window — no L1 queries, no false positives
+possible. Since Fuse query is O(1) regardless of filter size, the L0 query
+costs the same as a single L1 query.
+
+**FPR improvement**: For blocks in fully-negative windows:
+- Flat Fuse16: FPR = 1/65,536 per script
+- Hierarchical: FPR = 1/65,536 × 1/65,536 = 1/4,294,967,296 per script
+  (effectively zero)
+
+FPs can only survive in windows that contain at least one true positive block.
+This eliminates the vast majority of false positives for low-activity wallets
+(the typical mobile case) where most windows are fully negative.
+
+**Why this matters for large wallets**: The bandwidth problem with Fuse16 at
+480 scripts (~4 GB extra FP downloads over full chain) is driven by FPs in
+blocks far from any true match. Hierarchical filtering eliminates these.
+
+**Open questions**:
+- Optimal window size (32? 64? adaptive?)
+- L0 filter size overhead vs FP savings
+- Whether to use Fuse16 or a wider fingerprint (Fuse24/32) at L0 vs L1
+- Can the same concept work with Fuse8 at L1 (cheap/small) if L0 provides
+  sufficient FP suppression?
+
 ### Summary of Findings
 
-| Filter       | Speedup | Size vs GCS | FP (20k) | Viable? |
-|--------------|---------|-------------|----------|---------|
-| Hier. GCS    | 2-5x    | +overhead   | same     | moderate|
-| Fuse16       | 77x     | -2%         | +3       | YES     |
-| Fuse8        | 99x     | -51%        | +1,732   | NO      |
-| Xor8         | 100x    | -53%        | +1,840   | NO      |
+| Filter       | Speedup vs GCS | Size vs GCS | FP (50k, 24 scripts) | Viable? |
+|--------------|----------------|-------------|----------------------|---------|
+| Hier. GCS    | 2-5x           | +overhead   | same                 | moderate|
+| Fuse16       | 8-73x          | -2%         | +12                  | YES     |
+| Fuse8        | 99x            | -51%        | +1,732 (20k)         | NO      |
+| Xor8         | 100x           | -53%        | +1,840 (20k)         | NO      |
+| Hier. Fuse   | TBD            | TBD         | ~0 (expected)        | planned |
 
 **Recommendation**: Binary Fuse16 is the most promising direction. It delivers
-a ~77x client-side speedup with essentially identical network cost, addressing
-the core research question about CPU bottlenecks on mobile devices.
+8-73x client-side speedup (depending on wallet size) with small FP overhead
+for typical mobile wallets. For large wallets (200+ scripts), combining with
+a hierarchical approach could eliminate the FP bandwidth problem while
+maintaining O(1) query performance.
