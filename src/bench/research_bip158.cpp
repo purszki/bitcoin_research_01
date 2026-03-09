@@ -6,7 +6,7 @@
 #include <blockfilter.h>
 #include <fuse8filter.h>
 #include <fuse16filter.h>
-#include <hierarchical_blockfilters.h>
+#include <script/script.h>
 #include <xor8filter.h>
 #include <univalue.h>
 #include <util/filter_bench.h>
@@ -32,15 +32,6 @@ static const fs::path DEFAULT_BIN_STREAM_DIR =
     fs::PathFromString("light_client_research/mainnet_datasets/latest_50k_bins_250");
 static const fs::path DEFAULT_BIN_WALLET_SCENARIO =
     fs::PathFromString("light_client_research/mainnet_datasets/wallet_use_cases/wallet_use_case_simple_user.json");
-
-[[nodiscard]] static int GetEnvInt(const char* name, int default_value)
-{
-    const char* value = std::getenv(name);
-    if (value == nullptr || value[0] == '\0') return default_value;
-    const long parsed = std::strtol(value, nullptr, 10);
-    if (parsed <= 0) return default_value;
-    return static_cast<int>(parsed);
-}
 
 [[nodiscard]] static std::size_t GetEnvSizeT(const char* name, std::size_t default_value)
 {
@@ -243,124 +234,6 @@ static void ResearchBasicBinStreamingWalletScan(benchmark::Bench& bench)
                 BASIC_FILTER_M);
             const GCSFilter filter(params, block.elements);
             if (filter.MatchAny(wallet_scripts)) {
-                ++match_count;
-            }
-        }
-        ankerl::nanobench::doNotOptimizeAway(match_count);
-    });
-}
-
-static void ResearchHierarchicalBinStreamingWalletScan(benchmark::Bench& bench)
-{
-    const fs::path bin_dir = GetEnvPath("HIER_BIN_DIR", DEFAULT_BIN_STREAM_DIR);
-    const fs::path wallet_scenario = GetEnvPath("BIN_WALLET_SCENARIO", DEFAULT_BIN_WALLET_SCENARIO);
-    const std::size_t scan_max_blocks = GetEnvSizeT("BIN_SCAN_MAX_BLOCKS", 1000);
-    const std::size_t scan_window = GetEnvSizeT("SCAN_WINDOW", 32);
-    const int hier_p = GetEnvInt("HIER_P", 20);
-    const int hier_m = GetEnvInt("HIER_M", 1024);
-    if (scan_window == 0) {
-        throw std::runtime_error("SCAN_WINDOW must be > 0");
-    }
-
-    std::cout << "Loading bin chunks from: " << fs::PathToString(bin_dir) << std::endl;
-    std::cout << "Loading wallet scenario: " << fs::PathToString(wallet_scenario) << std::endl;
-    const std::vector<FilterBench::BinChunkMeta> chunk_metas = FilterBench::LoadBinChunkMetas(bin_dir);
-    const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
-    const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
-
-    struct PreparedWindow {
-        std::size_t first_block_index;
-        std::size_t last_block_index;
-        GCSFilter::ElementSet window_elements;
-        FilterBench::HierarchicalBlockFilters hierarchical_filters;
-    };
-
-    std::vector<PreparedWindow> windows;
-    FilterBench::TxBlockStreamReader reader(chunk_metas, scan_max_blocks);
-    std::size_t block_index{0};
-    while (reader.HasMore()) {
-        const std::size_t first = block_index;
-        GCSFilter::ElementSet window_elements;
-        std::vector<FilterBench::HierarchicalBlockFilters::LazyBlockFilterInput> block_filter_inputs;
-        block_filter_inputs.reserve(scan_window);
-
-        for (std::size_t i = 0; i < scan_window && reader.HasMore(); ++i) {
-            const auto block = reader.ReadNextBlock();
-            GCSFilter::ElementSet block_elements = ExtractElementsFromChunkBlock(block);
-            window_elements.insert(block_elements.begin(), block_elements.end());
-            block_filter_inputs.push_back(FilterBench::HierarchicalBlockFilters::LazyBlockFilterInput{
-                block.block_hash,
-                std::move(block_elements),
-            });
-            ++block_index;
-        }
-        if (block_filter_inputs.empty()) continue;
-
-        const std::size_t last = block_index - 1;
-        FilterBench::WindowBlockFilter l0_filter(
-            first,
-            last,
-            window_elements,
-            static_cast<uint8_t>(hier_p),
-            static_cast<uint32_t>(hier_m));
-        windows.push_back(PreparedWindow{
-            first,
-            last,
-            std::move(window_elements),
-            FilterBench::HierarchicalBlockFilters(first, std::move(l0_filter), std::move(block_filter_inputs)),
-        });
-    }
-    if (windows.empty()) {
-        throw std::runtime_error("no windows loaded from bin stream");
-    }
-
-    // Collect L0 stats from a single pass before the benchmark loop.
-    for (PreparedWindow& window : windows) {
-        window.hierarchical_filters.ResetOuterLayerStats();
-    }
-    for (PreparedWindow& window : windows) {
-        window.hierarchical_filters.window_filter = FilterBench::WindowBlockFilter(
-            window.first_block_index,
-            window.last_block_index,
-            window.window_elements,
-            static_cast<uint8_t>(hier_p),
-            static_cast<uint32_t>(hier_m));
-        for (auto& cached_l1 : window.hierarchical_filters.block_filters) {
-            cached_l1.reset();
-        }
-        window.hierarchical_filters.MatchAny(wallet_scripts);
-    }
-    {
-        uint64_t l0_signals{0};
-        uint64_t l0_false_positives{0};
-        for (const PreparedWindow& window : windows) {
-            l0_signals += window.hierarchical_filters.GetOuterLayerSignalCount();
-            l0_false_positives += window.hierarchical_filters.GetOuterLayerFalsePositiveCount();
-        }
-        std::ostringstream oss;
-        oss << "Hierarchical L0 stats (single pass): signals=" << l0_signals
-            << ", false_positives=" << l0_false_positives;
-        if (l0_signals > 0) {
-            const double fp_rate = static_cast<double>(l0_false_positives) / static_cast<double>(l0_signals);
-            oss << ", fp_rate=" << fp_rate;
-        }
-        std::cout << oss.str() << std::endl;
-    }
-
-    bench.name("ResearchHierarchicalBinStreamingWalletScan");
-    bench.run([&] {
-        std::size_t match_count{0};
-        for (PreparedWindow& window : windows) {
-            window.hierarchical_filters.window_filter = FilterBench::WindowBlockFilter(
-                window.first_block_index,
-                window.last_block_index,
-                window.window_elements,
-                static_cast<uint8_t>(hier_p),
-                static_cast<uint32_t>(hier_m));
-            for (auto& cached_l1 : window.hierarchical_filters.block_filters) {
-                cached_l1.reset();
-            }
-            if (window.hierarchical_filters.MatchAny(wallet_scripts).has_value()) {
                 ++match_count;
             }
         }
@@ -895,7 +768,7 @@ static void ResearchXor8ClientSideQuery(benchmark::Bench& bench)
 }
 
 BENCHMARK(ResearchBasicBinStreamingWalletScan);
-BENCHMARK(ResearchHierarchicalBinStreamingWalletScan);
+
 BENCHMARK(ResearchBasicClientSideQuery);
 BENCHMARK(ResearchFuse16ClientSideQuery);
 BENCHMARK(ResearchFuse8ClientSideQuery);
