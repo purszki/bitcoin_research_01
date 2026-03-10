@@ -45,6 +45,7 @@ python3 benchmark_tools/extract_bitcoin_data.py \
     --start-height 889327 \
     --end-height 939326 \
     --tx-only-mode \
+    --include-prevout-scripts \
     --output mainnet_datasets/mainnet_latest_50k_tx.json \
     --progress-every 500
 ```
@@ -130,7 +131,7 @@ BIN_SCAN_MAX_BLOCKS=50000 ./build-release/bin/bench_bitcoin \
 Run all wallet use cases (GCS vs Fuse16, 50k blocks):
 
 ```bash
-./run_wallet_benchmark.sh 50000
+./light_client_research/benchmark_tools/wallet_benchmark.sh 50000
 ```
 
 ### Environment variables
@@ -148,7 +149,7 @@ After completing the pipeline:
 ```
 light_client_research/
   mainnet_datasets/
-    latest_50k_bins_250/          # 200 .bin files, ~5 GB total
+    latest_50k_bins_250/          # 200 .bin files, ~23 GB total
       mainnet_889327-889576.bin
       mainnet_889577-889826.bin
       ...

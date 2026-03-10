@@ -1,0 +1,22 @@
+ High: docs still route users to a legacy benchmark script with known wrong FP semantics.
+     Both readme.md:294 and REPRODUCE.md:134 tell readers to run ./run_wallet_benchmark.sh, but that script still computes FP = fuse16_matches -
+     gcs_matches in run_wallet_benchmark.sh:56. You added a corrected script (benchmark_tools/wallet_benchmark.sh), but docs don’t point to it.
+  2. High: README’s published FP numbers remain undercounted vs actual false positives.
+     README presents FP as false-positive count in readme.md:300, but table values match legacy-delta FP from wallet_benchmark_results_50000.txt:53,
+     not matches - ground_truth.
+     Example: simple_user truth is 1034 in wallet_use_case_simple_user.json:80, GCS=1037 and Fuse16=1049 in wallet_benchmark_results_50000.txt:35, so
+     actual Fuse16 FP is 15, not 12.
+  3. Medium: “895k full chain” extrapolation is stale/inconsistent for this dataset.
+     README still extrapolates to 895k in readme.md:349, while your benchmark range is 889,327–939,326 in REPRODUCE.md:56. On March 9, 2026 this needs
+     an explicit dated snapshot or updated height.
+  4. Medium: Xor8 handling is still inconsistent in streaming paths.
+     Streaming validation/build skips <2 elements for all experimental filters in research_bip158.cpp:388 and research_bip158.cpp:724, but Xor8Filter
+     itself allows 1 element in xor8filter.cpp:45. This biases Xor8 stats.
+  5. Medium: research-only code is still linked into bitcoin_node.
+     PoC filter/bench utility sources are in core node target in src/CMakeLists.txt:177. For Bitcoin Core-style hygiene, this should be bench/research
+     gated.
+  6. Low: docs are still inconsistent on dataset size.
+     ~5 GB in REPRODUCE.md:152 conflicts with ~23 GB in readme.md:165.
+  7. Low: README references a missing artifact.
+     hierarchical_filter_results.txt is referenced in readme.md:562 but not present.
+

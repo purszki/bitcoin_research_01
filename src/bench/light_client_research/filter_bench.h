@@ -2,13 +2,13 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_UTIL_FILTER_BENCH_H
-#define BITCOIN_UTIL_FILTER_BENCH_H
+#ifndef BITCOIN_BENCH_LIGHT_CLIENT_RESEARCH_FILTER_BENCH_H
+#define BITCOIN_BENCH_LIGHT_CLIENT_RESEARCH_FILTER_BENCH_H
 
 #include <blockfilter.h>
 #include <uint256.h>
 #include <univalue.h>
-#include <util/full_dataset.h>
+#include <bench/light_client_research/full_dataset.h>
 #include <util/fs.h>
 
 #include <string>
@@ -66,4 +66,4 @@ std::vector<GCSFilter::ElementSet> ParseQueries(const UniValue& queries_arr);
 
 } // namespace FilterBench
 
-#endif // BITCOIN_UTIL_FILTER_BENCH_H
+#endif // BITCOIN_BENCH_LIGHT_CLIENT_RESEARCH_FILTER_BENCH_H

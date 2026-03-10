@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <util/full_dataset.h>
+#include <bench/light_client_research/full_dataset.h>
 
 #include <blockfilter.h>
 #include <script/script.h>

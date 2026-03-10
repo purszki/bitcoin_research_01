@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or https://opensource.org/license/mit/.
 
-#ifndef BITCOIN_FUSE16FILTER_H
-#define BITCOIN_FUSE16FILTER_H
+#ifndef BITCOIN_BENCH_LIGHT_CLIENT_RESEARCH_FUSE16FILTER_H
+#define BITCOIN_BENCH_LIGHT_CLIENT_RESEARCH_FUSE16FILTER_H
 
 #include <cstddef>
 #include <cstdint>
@@ -56,4 +56,4 @@ public:
                                     const std::vector<unsigned char>& data);
 };
 
-#endif // BITCOIN_FUSE16FILTER_H
+#endif // BITCOIN_BENCH_LIGHT_CLIENT_RESEARCH_FUSE16FILTER_H

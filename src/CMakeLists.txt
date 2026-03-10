@@ -181,14 +181,13 @@ add_library(bitcoin_node STATIC EXCLUDE_FROM_ALL
   bip324.cpp
   blockencodings.cpp
   blockfilter.cpp
-  fuse8filter.cpp
-  fuse16filter.cpp
-  hierarchical_blockfilters.cpp
-  xor8filter.cpp
-  util/full_dataset.cpp
-  util/filter_bench.cpp
-  util/tx_block_chunk_store.cpp
-  util/tx_block_stream_reader.cpp
+  bench/light_client_research/fuse8filter.cpp
+  bench/light_client_research/fuse16filter.cpp
+  bench/light_client_research/xor8filter.cpp
+  bench/light_client_research/full_dataset.cpp
+  bench/light_client_research/filter_bench.cpp
+  bench/light_client_research/tx_block_chunk_store.cpp
+  bench/light_client_research/tx_block_stream_reader.cpp
   consensus/tx_verify.cpp
   dbwrapper.cpp
   deploymentstatus.cpp
@@ -388,20 +387,6 @@ if(BUILD_UTIL)
   install_binary_component(bitcoin-util HAS_MANPAGE)
 endif()
 
-if(BUILD_BENCH)
-  add_executable(bitcoin-research-filter
-    bitcoin-research-filter.cpp
-    noui.cpp
-  )
-  target_link_libraries(bitcoin-research-filter
-    PRIVATE
-      bitcoin_node
-      bitcoin_common
-      bitcoin_util
-      univalue
-      core_interface
-  )
-endif()
 
 if(BUILD_GUI)
   add_subdirectory(qt)

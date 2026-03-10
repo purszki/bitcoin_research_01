@@ -2,12 +2,12 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_UTIL_TX_BLOCK_CHUNK_STORE_H
-#define BITCOIN_UTIL_TX_BLOCK_CHUNK_STORE_H
+#ifndef BITCOIN_BENCH_LIGHT_CLIENT_RESEARCH_TX_BLOCK_CHUNK_STORE_H
+#define BITCOIN_BENCH_LIGHT_CLIENT_RESEARCH_TX_BLOCK_CHUNK_STORE_H
 
 #include <uint256.h>
 #include <util/fs.h>
-#include <util/full_dataset.h>
+#include <bench/light_client_research/full_dataset.h>
 
 #include <cstdint>
 #include <string>
@@ -74,4 +74,4 @@ public:
 
 } // namespace FilterBench
 
-#endif // BITCOIN_UTIL_TX_BLOCK_CHUNK_STORE_H
+#endif // BITCOIN_BENCH_LIGHT_CLIENT_RESEARCH_TX_BLOCK_CHUNK_STORE_H

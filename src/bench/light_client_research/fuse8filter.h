@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or https://opensource.org/license/mit/.
 
-#ifndef BITCOIN_XOR8FILTER_H
-#define BITCOIN_XOR8FILTER_H
+#ifndef BITCOIN_BENCH_LIGHT_CLIENT_RESEARCH_FUSE8FILTER_H
+#define BITCOIN_BENCH_LIGHT_CLIENT_RESEARCH_FUSE8FILTER_H
 
 #include <cstddef>
 #include <cstdint>
@@ -15,18 +15,17 @@
 #include <util/bytevectorhash.h>
 
 /**
- * Xor8 filter — a compact, immutable approximate membership structure.
+ * Binary Fuse8 filter — a compact, immutable approximate membership structure.
  *
  * Properties:
- *   - ~9.84 bits per element (vs ~9 for Fuse8, ~18 for Fuse16, ~20 for GCS)
+ *   - ~9 bits per element (vs ~18 for Fuse16, ~20 for BIP 158 GCS)
  *   - False positive rate: 1/256 (~0.39%)
  *   - O(1) per-element query (3 array lookups + XOR)
  *   - O(N) expected construction time (probabilistic, retries with new seeds)
- *   - Slightly larger than Binary Fuse8 but faster construction
  *
  * Elements are hashed via SipHash-2-4 keyed by (siphash_k0, siphash_k1).
  */
-class Xor8Filter
+class Fuse8Filter
 {
 public:
     typedef std::vector<unsigned char> Element;
@@ -36,19 +35,18 @@ private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;
 
-    uint64_t m_siphash_k0{0};
+        uint64_t m_siphash_k0{0};
     uint64_t m_siphash_k1{0};
 
     uint64_t HashElement(const Element& element) const;
 
 public:
-    Xor8Filter();
-    ~Xor8Filter();
-    Xor8Filter(Xor8Filter&&) noexcept;
-    Xor8Filter& operator=(Xor8Filter&&) noexcept;
+    Fuse8Filter();
+    ~Fuse8Filter();
+    Fuse8Filter(Fuse8Filter&&) noexcept;
+    Fuse8Filter& operator=(Fuse8Filter&&) noexcept;
 
-    /** Build a filter from elements, keyed by siphash parameters. */
-    Xor8Filter(uint64_t siphash_k0, uint64_t siphash_k1, const ElementSet& elements);
+    Fuse8Filter(uint64_t siphash_k0, uint64_t siphash_k1, const ElementSet& elements);
 
     bool Match(const Element& element) const;
     bool MatchAny(const ElementSet& elements) const;
@@ -56,8 +54,8 @@ public:
     size_t SerializedSize() const;
     std::vector<unsigned char> Serialize() const;
 
-    static Xor8Filter Deserialize(uint64_t siphash_k0, uint64_t siphash_k1,
-                                  const std::vector<unsigned char>& data);
+    static Fuse8Filter Deserialize(uint64_t siphash_k0, uint64_t siphash_k1,
+                                   const std::vector<unsigned char>& data);
 };
 
-#endif // BITCOIN_XOR8FILTER_H
+#endif // BITCOIN_BENCH_LIGHT_CLIENT_RESEARCH_FUSE8FILTER_H

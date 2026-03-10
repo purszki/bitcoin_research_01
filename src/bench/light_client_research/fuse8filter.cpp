@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or https://opensource.org/license/mit/.
 
-#include <fuse8filter.h>
+#include <bench/light_client_research/fuse8filter.h>
 
 #include <crypto/siphash.h>
 
@@ -11,7 +11,7 @@
 #include <string>
 
 // C header — only included here, never in fuse8filter.h.
-#include <crypto/binaryfusefilter.h>
+#include <bench/xor_singleheader/binaryfusefilter.h>
 
 struct Fuse8Filter::Impl {
     binary_fuse8_t filter{};

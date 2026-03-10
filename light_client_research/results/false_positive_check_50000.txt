@@ -1,0 +1,51 @@
+================================================================================
+Ground-Truth Validation — All Wallets × All Filters — 50000 blocks
+Date: 2026-03-09 22:23
+================================================================================
+
+Wallet                    Scripts  Filter    TrueHits Candidates    FN     FP  Skipped Failures
+--------------------------------------------------------------------------------------------------------------
+coinjoin_privacy_user         120  GCS           8131       8134     0      3        0        0
+coinjoin_privacy_user         120  FUSE16        8131       8210     0     79       55        0
+coinjoin_privacy_user         120  FUSE8         8131      23735     0  15604       55        0
+coinjoin_privacy_user         120  XOR8          8131      23849     0  15718       55        0
+cold_storage_vault             60  GCS            761        762     0      1        0        0
+cold_storage_vault             60  FUSE16         761        813     0     52       55        0
+cold_storage_vault             60  FUSE8          761      11105     0  10344       55        0
+cold_storage_vault             60  XOR8           761      11107     0  10346       55        0
+custody_wallet                220  GCS          11216      11224     0      8        0        0
+custody_wallet                220  FUSE16       11216      11360     0    144       55        0
+custody_wallet                220  FUSE8        11216      33764     0  22548       55        0
+custody_wallet                220  XOR8         11216      33687     0  22471       55        0
+exchange_hot_wallet           480  GCS          27530      27539     0      9        0        0
+exchange_hot_wallet           480  FUSE16       27530      27666     0    136       55        0
+exchange_hot_wallet           480  FUSE8        27530      46514     0  18984       55        0
+exchange_hot_wallet           480  XOR8         27530      46545     0  19015       55        0
+legacy_migrator                90  GCS          18179      18180     0      1        0        0
+legacy_migrator                90  FUSE16       18179      18226     0     47       55        0
+legacy_migrator                90  FUSE8        18179      27502     0   9323       55        0
+legacy_migrator                90  XOR8         18179      27522     0   9343       55        0
+lightning_operator            180  GCS           4044       4055     0     11        0        0
+lightning_operator            180  FUSE16        4044       4190     0    146       55        0
+lightning_operator            180  FUSE8         4044      27336     0  23292       55        0
+lightning_operator            180  XOR8          4044      27243     0  23199       55        0
+merchant_batch_settler        140  GCS          21795      21798     0      3        0        0
+merchant_batch_settler        140  FUSE16       21795      21863     0     68       55        0
+merchant_batch_settler        140  FUSE8        21795      33661     0  11866       55        0
+merchant_batch_settler        140  XOR8         21795      33668     0  11873       55        0
+simple_user                    24  GCS           1034       1037     0      3        0        0
+simple_user                    24  FUSE16        1034       1053     0     19       55        0
+simple_user                    24  FUSE8         1034       5361     0   4327       55        0
+simple_user                    24  XOR8          1034       5348     0   4314       55        0
+taproot_power_user             96  GCS           7124       7128     0      4        0        0
+taproot_power_user             96  FUSE16        7124       7192     0     68       55        0
+taproot_power_user             96  FUSE8         7124      20459     0  13335       55        0
+taproot_power_user             96  XOR8          7124      20504     0  13380       55        0
+watch_only_auditor            320  GCS          23267      23282     0     15        0        0
+watch_only_auditor            320  FUSE16       23267      23406     0    139       55        0
+watch_only_auditor            320  FUSE8        23267      42432     0  19165       55        0
+watch_only_auditor            320  XOR8         23267      42295     0  19028       55        0
+
+================================================================================
+RESULT: PASS — zero false negatives across all filters and wallets
+================================================================================

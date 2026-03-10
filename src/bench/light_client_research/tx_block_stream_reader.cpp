@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <util/tx_block_stream_reader.h>
+#include <bench/light_client_research/tx_block_stream_reader.h>
 
 #include <algorithm>
 #include <cstdlib>

@@ -11,7 +11,7 @@
 //   ./build-release/bin/filter_demo
 
 #include <blockfilter.h>
-#include <fuse16filter.h>
+#include <bench/light_client_research/fuse16filter.h>
 #include <uint256.h>
 #include <util/strencodings.h>
 #include <util/translation.h>

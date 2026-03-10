@@ -4,14 +4,14 @@
 
 #include <bench/bench.h>
 #include <blockfilter.h>
-#include <fuse8filter.h>
-#include <fuse16filter.h>
+#include <bench/light_client_research/fuse8filter.h>
+#include <bench/light_client_research/fuse16filter.h>
 #include <script/script.h>
-#include <xor8filter.h>
+#include <bench/light_client_research/xor8filter.h>
 #include <univalue.h>
-#include <util/filter_bench.h>
+#include <bench/light_client_research/filter_bench.h>
 #include <util/fs.h>
-#include <util/tx_block_stream_reader.h>
+#include <bench/light_client_research/tx_block_stream_reader.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -163,6 +163,11 @@ struct PreparedBlock {
     return blocks;
 }
 
+static void ValidateFuse16GroundTruth(
+    const std::vector<PreparedBlock>& blocks,
+    const WalletScenarioData& scenario,
+    const GCSFilter::ElementSet& wallet_scripts);
+
 static void ValidateGroundTruth(
     const std::vector<PreparedBlock>& blocks,
     const WalletScenarioData& scenario,
@@ -222,6 +227,7 @@ static void ResearchBasicBinStreamingWalletScan(benchmark::Bench& bench)
 
     const std::vector<PreparedBlock> blocks = LoadBlocksFromBinStream(chunk_metas, scan_max_blocks);
     ValidateGroundTruth(blocks, scenario, wallet_scripts);
+    ValidateFuse16GroundTruth(blocks, scenario, wallet_scripts);
 
     bench.name("ResearchBasicBinStreamingWalletScan");
     bench.run([&] {
@@ -320,6 +326,136 @@ static void ValidateFuse16GroundTruth(
 {
     ValidateGroundTruth(blocks, scenario, wallet_scripts);
     ValidateFuse16GroundTruth(blocks, scenario, wallet_scripts);
+}
+
+// Streaming ground-truth validation: processes one block at a time so memory
+// usage stays low even for 50k+ blocks.
+static void StreamingGroundTruthValidation(benchmark::Bench& bench)
+{
+    const fs::path bin_dir = GetEnvPath("HIER_BIN_DIR", DEFAULT_BIN_STREAM_DIR);
+    const fs::path wallet_scenario = GetEnvPath("BIN_WALLET_SCENARIO", DEFAULT_BIN_WALLET_SCENARIO);
+    const std::size_t scan_max_blocks = GetEnvSizeT("BIN_SCAN_MAX_BLOCKS", 1000);
+
+    std::cout << "[GroundTruth] Streaming validation for " << scan_max_blocks << " blocks" << std::endl;
+    const std::vector<FilterBench::BinChunkMeta> chunk_metas = FilterBench::LoadBinChunkMetas(bin_dir);
+    const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
+    const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
+
+    if (!scenario.has_ground_truth) {
+        std::cout << "[GroundTruth] SKIPPED (no ground truth data)" << std::endl;
+        bench.name("StreamingGroundTruthValidation");
+        bench.run([]{});
+        return;
+    }
+
+    // Per-filter-type tracking.
+    struct FilterStats {
+        const char* name;
+        std::size_t candidate_matches{0};
+        std::size_t skipped_small{0};
+        std::size_t construction_failures{0};
+    };
+    FilterStats gcs_stats{"GCS"};
+    FilterStats fuse16_stats{"Fuse16"};
+    FilterStats fuse8_stats{"Fuse8"};
+    FilterStats xor8_stats{"Xor8"};
+
+    std::unordered_set<std::size_t> gcs_match_indices;
+    std::unordered_set<std::size_t> fuse16_match_indices;
+    std::unordered_set<std::size_t> fuse8_match_indices;
+    std::unordered_set<std::size_t> xor8_match_indices;
+
+    FilterBench::TxBlockStreamReader reader(chunk_metas, scan_max_blocks);
+    std::size_t block_index{0};
+    std::size_t total_blocks{0};
+    while (reader.HasMore()) {
+        const auto block = reader.ReadNextBlock();
+        GCSFilter::ElementSet elements = ExtractElementsFromChunkBlock(block);
+        const uint64_t k0 = block.block_hash.GetUint64(0);
+        const uint64_t k1 = block.block_hash.GetUint64(1);
+
+        // GCS
+        {
+            GCSFilter::Params params(k0, k1, BASIC_FILTER_P, BASIC_FILTER_M);
+            GCSFilter filter(params, elements);
+            if (filter.MatchAny(wallet_scripts)) {
+                gcs_match_indices.insert(block_index);
+                ++gcs_stats.candidate_matches;
+            }
+        }
+
+        // Fuse16
+        if (elements.size() < 2) {
+            ++fuse16_stats.skipped_small;
+            ++fuse8_stats.skipped_small;
+            ++xor8_stats.skipped_small;
+        } else {
+            try {
+                Fuse16Filter f16(k0, k1, elements);
+                if (f16.MatchAny(wallet_scripts)) {
+                    fuse16_match_indices.insert(block_index);
+                    ++fuse16_stats.candidate_matches;
+                }
+            } catch (...) { ++fuse16_stats.construction_failures; }
+
+            try {
+                Fuse8Filter f8(k0, k1, elements);
+                if (f8.MatchAny(wallet_scripts)) {
+                    fuse8_match_indices.insert(block_index);
+                    ++fuse8_stats.candidate_matches;
+                }
+            } catch (...) { ++fuse8_stats.construction_failures; }
+
+            try {
+                Xor8Filter x8(k0, k1, elements);
+                if (x8.MatchAny(wallet_scripts)) {
+                    xor8_match_indices.insert(block_index);
+                    ++xor8_stats.candidate_matches;
+                }
+            } catch (...) { ++xor8_stats.construction_failures; }
+        }
+
+        ++block_index;
+        ++total_blocks;
+    }
+
+    // Check each filter type against ground truth.
+    auto check = [&](const char* name, const std::unordered_set<std::size_t>& match_indices,
+                     const FilterStats& stats) {
+        std::size_t in_range{0}, fn{0};
+        for (const std::size_t idx : scenario.ground_truth_block_indices) {
+            if (idx >= total_blocks) continue;
+            ++in_range;
+            if (match_indices.count(idx) == 0) {
+                ++fn;
+                std::cerr << "\033[1;31m*** " << name << " FALSE NEGATIVE block_index=" << idx << "\033[0m" << std::endl;
+            }
+        }
+        const std::size_t fp = match_indices.size() > in_range ? match_indices.size() - in_range : 0;
+        std::cout << name << "_GROUND_TRUTH"
+                  << " scenario=" << scenario.scenario_id
+                  << " scanned_blocks=" << total_blocks
+                  << " skipped_small=" << stats.skipped_small
+                  << " construction_failures=" << stats.construction_failures
+                  << " true_hits_in_range=" << in_range
+                  << " candidate_matches=" << match_indices.size()
+                  << " false_negatives=" << fn
+                  << " false_positives=" << fp
+                  << std::endl;
+        if (fn != 0) {
+            throw std::runtime_error(std::string(name) + " GROUND-TRUTH VALIDATION FAILED: "
+                + std::to_string(fn) + " false negatives!");
+        }
+    };
+
+    check("GCS", gcs_match_indices, gcs_stats);
+    check("FUSE16", fuse16_match_indices, fuse16_stats);
+    check("FUSE8", fuse8_match_indices, fuse8_stats);
+    check("XOR8", xor8_match_indices, xor8_stats);
+
+    // Dummy bench so nanobench doesn't complain.
+    bench.name("StreamingGroundTruthValidation");
+    bench.run([]{});
 }
 
 [[maybe_unused]] static void ValidateFuse8GroundTruth(
@@ -768,6 +904,7 @@ static void ResearchXor8ClientSideQuery(benchmark::Bench& bench)
 }
 
 BENCHMARK(ResearchBasicBinStreamingWalletScan);
+BENCHMARK(StreamingGroundTruthValidation);
 
 BENCHMARK(ResearchBasicClientSideQuery);
 BENCHMARK(ResearchFuse16ClientSideQuery);

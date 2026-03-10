@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_UTIL_FULL_DATASET_H
-#define BITCOIN_UTIL_FULL_DATASET_H
+#ifndef BITCOIN_BENCH_LIGHT_CLIENT_RESEARCH_FULL_DATASET_H
+#define BITCOIN_BENCH_LIGHT_CLIENT_RESEARCH_FULL_DATASET_H
 
 #include <blockfilter.h>
 
@@ -80,4 +80,4 @@ public:
 
 } // namespace FilterBench
 
-#endif // BITCOIN_UTIL_FULL_DATASET_H
+#endif // BITCOIN_BENCH_LIGHT_CLIENT_RESEARCH_FULL_DATASET_H

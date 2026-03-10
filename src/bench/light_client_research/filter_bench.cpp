@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <util/filter_bench.h>
+#include <bench/light_client_research/filter_bench.h>
 #include <blockfilter.h>
 #include <script/script.h>
 #include <uint256.h>

@@ -2,11 +2,11 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef BITCOIN_UTIL_TX_BLOCK_STREAM_READER_H
-#define BITCOIN_UTIL_TX_BLOCK_STREAM_READER_H
+#ifndef BITCOIN_BENCH_LIGHT_CLIENT_RESEARCH_TX_BLOCK_STREAM_READER_H
+#define BITCOIN_BENCH_LIGHT_CLIENT_RESEARCH_TX_BLOCK_STREAM_READER_H
 
 #include <util/fs.h>
-#include <util/tx_block_chunk_store.h>
+#include <bench/light_client_research/tx_block_chunk_store.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -57,4 +57,4 @@ private:
 
 } // namespace FilterBench
 
-#endif // BITCOIN_UTIL_TX_BLOCK_STREAM_READER_H
+#endif // BITCOIN_BENCH_LIGHT_CLIENT_RESEARCH_TX_BLOCK_STREAM_READER_H

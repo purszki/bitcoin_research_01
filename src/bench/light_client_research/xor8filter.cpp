@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or https://opensource.org/license/mit/.
 
-#include <xor8filter.h>
+#include <bench/light_client_research/xor8filter.h>
 
 #include <crypto/siphash.h>
 
@@ -11,7 +11,7 @@
 #include <string>
 
 // C header — only included here, never in xor8filter.h.
-#include <crypto/xorfilter.h>
+#include <bench/xor_singleheader/xorfilter.h>
 
 struct Xor8Filter::Impl {
     xor8_t filter{};

@@ -1,0 +1,3 @@
+theme: jekyll-theme-cayman
+title: "Binary Fuse Filters for Bitcoin Light Clients"
+description: "Research: Can Binary Fuse filters improve GCS-based compact block filters (BIP 158)?"
