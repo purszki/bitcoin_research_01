@@ -90,6 +90,6 @@ NOTES on AI usage:
  - C++ benchmarking boilerplate code: AI gen OK
  - C++ validation: MUST manual coding
  - Algo prototyping: hybrid approach
-
+ - Unit test requirement: add malformed encoded-filter deserialization test in `src/test/blockfilter_tests.cpp` that verifies rejection of filters with decoded-value overflow/out-of-range semantics (not only length/parse validity).
 
 

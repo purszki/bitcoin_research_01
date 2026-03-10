@@ -13,8 +13,11 @@
 #include <util/strencodings.h>
 
 #include <cstddef>
+#include <cstdlib>
 #include <fstream>
+#include <iostream>
 #include <iterator>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -40,6 +43,25 @@ struct ScenarioDataDummy {
     std::vector<GCSFilterDummy::ElementSet> queries;
 };
 
+[[nodiscard]] static std::optional<std::size_t> MatchAnyBasicFirstIndex(
+    const std::vector<BlockFilter>& block_filters,
+    const GCSFilter::ElementSet& query)
+{
+    for (std::size_t i = 0; i < block_filters.size(); ++i) {
+        if (block_filters[i].GetFilter().MatchAny(query)) return i;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] static int GetEnvInt(const char* name, int default_value)
+{
+    const char* value = std::getenv(name);
+    if (value == nullptr || value[0] == '\0') return default_value;
+    const long parsed = std::strtol(value, nullptr, 10);
+    if (parsed <= 0) return default_value;
+    return static_cast<int>(parsed);
+}
+
 [[nodiscard]] static const UniValue& GetRequired(const UniValue& obj, std::string_view key, UniValue::VType type)
 {
     const UniValue& value = obj.find_value(key);
@@ -52,80 +74,30 @@ struct ScenarioDataDummy {
 [[nodiscard]] static ScenarioData LoadScenario(const fs::path& scenario_path)
 {
     UniValue scenario_json = FilterBench::ReadDataset(scenario_path);
-    const UniValue& scenario_obj = scenario_json.get_obj();
-
-    const UniValue& dataset_files = GetRequired(scenario_obj, "dataset_files", UniValue::VOBJ).get_obj();
-    const std::string blocks_file = GetRequired(dataset_files, "blocks_json", UniValue::VSTR).get_str();
-    const fs::path blocks_path = scenario_path.parent_path() / blocks_file;
-
-    UniValue blocks_json = FilterBench::ReadDataset(blocks_path);
+    const UniValue& dataset_files = GetRequired(scenario_json.get_obj(), "dataset_files", UniValue::VOBJ).get_obj();
+    FilterBench::FullDataset tx_dataset = FilterBench::ReadFullDataset(
+        scenario_path.parent_path() / GetRequired(dataset_files, "tx_json", UniValue::VSTR).get_str()
+    );
+    FilterBench::PreparedDataset prepared = FilterBench::PreparedDataset::FromFullDataset(tx_dataset);
+    
     ScenarioData out;
-
-    const UniValue& blocks = GetRequired(blocks_json.get_obj(), "blocks", UniValue::VARR).get_array();
-    out.block_filters.reserve(blocks.size());
-    for (const UniValue& block : blocks.getValues()) {
-        const std::string block_hash_hex = GetRequired(block.get_obj(), "block_hash", UniValue::VSTR).get_str();
-        const std::string filter_hex = GetRequired(block.get_obj(), "filter_hex", UniValue::VSTR).get_str();
-
-        out.block_filters.emplace_back(
-            BlockFilterType::BASIC,
-            uint256::FromHex(block_hash_hex).value(),
-            ParseHex(filter_hex),
-            /*skip_decode_check=*/false
-        );
-    }
-
-    const UniValue& queries = GetRequired(scenario_obj, "queries", UniValue::VARR).get_array();
-    out.queries.reserve(queries.size());
-    for (const UniValue& query : queries.getValues()) {
-        const UniValue& script_pub_keys = GetRequired(query.get_obj(), "script_pub_keys", UniValue::VARR).get_array();
-        GCSFilter::ElementSet elements;
-        for (const UniValue& spk : script_pub_keys.getValues()) {
-            elements.insert(ParseHex(spk.get_str()));
-        }
-        out.queries.push_back(std::move(elements));
-    }
-
+    out.block_filters = prepared.GetBasicBlockFilters();
+    out.queries = FilterBench::ParseQueries(scenario_json["queries"]);
     return out;
 }
 
 [[nodiscard]] static ScenarioDataDummy LoadScenarioDummy(const fs::path& scenario_path)
 {
     UniValue scenario_json = FilterBench::ReadDataset(scenario_path);
-    const UniValue& scenario_obj = scenario_json.get_obj();
-
-    const UniValue& dataset_files = GetRequired(scenario_obj, "dataset_files", UniValue::VOBJ).get_obj();
-    const std::string blocks_file = GetRequired(dataset_files, "blocks_json", UniValue::VSTR).get_str();
-    const fs::path blocks_path = scenario_path.parent_path() / blocks_file;
-
-    UniValue blocks_json = FilterBench::ReadDataset(blocks_path);
+    const UniValue& dataset_files = GetRequired(scenario_json.get_obj(), "dataset_files", UniValue::VOBJ).get_obj();
+    FilterBench::FullDataset tx_dataset = FilterBench::ReadFullDataset(
+        scenario_path.parent_path() / GetRequired(dataset_files, "tx_json", UniValue::VSTR).get_str()
+    );
+    FilterBench::PreparedDataset prepared = FilterBench::PreparedDataset::FromFullDataset(tx_dataset);
+    
     ScenarioDataDummy out;
-
-    const UniValue& blocks = GetRequired(blocks_json.get_obj(), "blocks", UniValue::VARR).get_array();
-    out.block_filters.reserve(blocks.size());
-    for (const UniValue& block : blocks.getValues()) {
-        const std::string block_hash_hex = GetRequired(block.get_obj(), "block_hash", UniValue::VSTR).get_str();
-        const std::string filter_hex = GetRequired(block.get_obj(), "filter_hex", UniValue::VSTR).get_str();
-
-        out.block_filters.emplace_back(
-            BlockFilterType::BASIC,
-            uint256::FromHex(block_hash_hex).value(),
-            ParseHex(filter_hex),
-            /*skip_decode_check=*/false
-        );
-    }
-
-    const UniValue& queries = GetRequired(scenario_obj, "queries", UniValue::VARR).get_array();
-    out.queries.reserve(queries.size());
-    for (const UniValue& query : queries.getValues()) {
-        const UniValue& script_pub_keys = GetRequired(query.get_obj(), "script_pub_keys", UniValue::VARR).get_array();
-        GCSFilterDummy::ElementSet elements;
-        for (const UniValue& spk : script_pub_keys.getValues()) {
-            elements.insert(ParseHex(spk.get_str()));
-        }
-        out.queries.push_back(std::move(elements));
-    }
-
+    out.block_filters = prepared.GetDummyBlockFilters();
+    out.queries = FilterBench::ParseQueries(scenario_json["queries"]);
     return out;
 }
 
@@ -146,46 +118,131 @@ static void RunScenario(benchmark::Bench& bench, const fs::path& scenario_path)
     });
 }
 
-static void RunScenarioDummy(benchmark::Bench& bench, const fs::path& scenario_path)
+
+static void RunScenarioHierarchicalOnTheFly(benchmark::Bench& bench, const fs::path& scenario_path)
 {
     const ScenarioData data_basic = LoadScenario(scenario_path);
-    const ScenarioDataDummy data_dummy = LoadScenarioDummy(scenario_path);
 
-    // Validation: Ensure Dummy results exactly match Basic results
+    UniValue scenario_json = FilterBench::ReadDataset(scenario_path);
+    const UniValue& scenario_obj = scenario_json.get_obj();
+    const UniValue& dataset_files = GetRequired(scenario_obj, "dataset_files", UniValue::VOBJ).get_obj();
+    const fs::path input_path = scenario_path.parent_path() / GetRequired(dataset_files, "tx_json", UniValue::VSTR).get_str();
+
+    std::cout << "Loading dataset: " << fs::PathToString(input_path) << "..." << std::endl;
+    FilterBench::FullDataset tx_dataset = FilterBench::ReadFullDataset(input_path);
+    FilterBench::PreparedDataset prepared = FilterBench::PreparedDataset::FromFullDataset(tx_dataset);
+
+    const int hier_window = GetEnvInt("HIER_WINDOW", 64);
+    const int hier_p = GetEnvInt("HIER_P", 10);
+    const int hier_m = GetEnvInt("HIER_M", 256);
+
+    std::cout << "Generating hierarchical filter set (L0+L1)..." << std::endl;
+    std::vector<FilterBench::HierarchicalBlockFilters> hierarchical_sets =
+        prepared.GetHierarchicalBlockFilters(hier_window, hier_p, hier_m);
+    Assert(!hierarchical_sets.empty());
+    const FilterBench::HierarchicalBlockFilters& hierarchical = hierarchical_sets.front();
+
+    const std::vector<GCSFilter::ElementSet> queries = FilterBench::ParseQueries(scenario_json["queries"]);
+
+    // Validation: Ensure hierarchical result presence matches baseline Basic presence.
     for (size_t q_idx = 0; q_idx < data_basic.queries.size(); ++q_idx) {
-        for (size_t b_idx = 0; b_idx < data_basic.block_filters.size(); ++b_idx) {
-            bool result_basic = data_basic.block_filters[b_idx].GetFilter().MatchAny(data_basic.queries[q_idx]);
-            bool result_dummy = data_dummy.block_filters[b_idx].GetFilter().MatchAny(data_dummy.queries[q_idx]);
-            Assert(result_basic == result_dummy);
+        bool result_basic{false};
+        for (const BlockFilter& block_filter : data_basic.block_filters) {
+            if (block_filter.GetFilter().MatchAny(data_basic.queries[q_idx])) {
+                result_basic = true;
+                break;
+            }
+        }
+        const bool result_hierarchical = hierarchical.MatchAny(queries[q_idx]).has_value();
+        if (result_basic != result_hierarchical) {
+            std::cerr << "Mismatch in query " << q_idx << std::endl;
+            Assert(false);
         }
     }
 
     bench.run([&] {
         std::size_t match_count{0};
-        for (const GCSFilterDummy::ElementSet& query : data_dummy.queries) {
-            for (const BlockFilterDummy& block_filter : data_dummy.block_filters) {
-                if (block_filter.GetFilter().MatchAny(query)) {
-                    ++match_count;
-                }
+        std::size_t matched_index_sum{0};
+        for (const GCSFilter::ElementSet& query : queries) {
+            const std::optional<std::size_t> match_idx = hierarchical.MatchAny(query);
+            if (match_idx.has_value()) {
+                ++match_count;
+                matched_index_sum += *match_idx;
             }
         }
         ankerl::nanobench::doNotOptimizeAway(match_count);
+        ankerl::nanobench::doNotOptimizeAway(matched_index_sum);
     });
 }
 
-static void ResearchBIP158SinglePositive(benchmark::Bench& bench) { RunScenario(bench, SCENARIO_SINGLE_POSITIVE); }
-static void ResearchBIP158WalletLikeMulti(benchmark::Bench& bench) { RunScenario(bench, SCENARIO_WALLET_MULTI); }
-static void ResearchBIP158StrictNegative(benchmark::Bench& bench) { RunScenario(bench, SCENARIO_STRICT_NEGATIVE); }
-static void ResearchBIP158MixedPresentAbsent(benchmark::Bench& bench) { RunScenario(bench, SCENARIO_MIXED_PRESENT_ABSENT); }
+static void RunScenarioBasicOnTheFly(benchmark::Bench& bench, const fs::path& scenario_path)
+{
+    const ScenarioData data_basic = LoadScenario(scenario_path);
 
-static void ResearchDummySinglePositive(benchmark::Bench& bench) { RunScenarioDummy(bench, SCENARIO_SINGLE_POSITIVE); }
-static void ResearchDummyTestComparison(benchmark::Bench& bench) { RunScenarioDummy(bench, SCENARIO_DUMMY_TEST); }
+    UniValue scenario_json = FilterBench::ReadDataset(scenario_path);
+    const UniValue& scenario_obj = scenario_json.get_obj();
+    const UniValue& dataset_files = GetRequired(scenario_obj, "dataset_files", UniValue::VOBJ).get_obj();
+    const fs::path input_path = scenario_path.parent_path() / GetRequired(dataset_files, "tx_json", UniValue::VSTR).get_str();
 
-BENCHMARK(ResearchBIP158SinglePositive);
-BENCHMARK(ResearchBIP158WalletLikeMulti);
-BENCHMARK(ResearchBIP158StrictNegative);
-BENCHMARK(ResearchBIP158MixedPresentAbsent);
-BENCHMARK(ResearchDummySinglePositive);
-BENCHMARK(ResearchDummyTestComparison);
+    std::cout << "Loading dataset: " << fs::PathToString(input_path) << "..." << std::endl;
+    FilterBench::FullDataset tx_dataset = FilterBench::ReadFullDataset(input_path);
+    FilterBench::PreparedDataset prepared = FilterBench::PreparedDataset::FromFullDataset(tx_dataset);
+
+    std::cout << "Generating filter set using algo: basic..." << std::endl;
+    std::vector<BlockFilter> on_the_fly_basic = prepared.GetBasicBlockFilters();
+    const std::vector<GCSFilter::ElementSet> queries = FilterBench::ParseQueries(scenario_json["queries"]);
+
+    // Validation: Ensure first-match existence matches baseline Basic presence.
+    for (size_t q_idx = 0; q_idx < data_basic.queries.size(); ++q_idx) {
+        bool result_basic{false};
+        for (const BlockFilter& block_filter : data_basic.block_filters) {
+            if (block_filter.GetFilter().MatchAny(data_basic.queries[q_idx])) {
+                result_basic = true;
+                break;
+            }
+        }
+        const bool result_on_the_fly = MatchAnyBasicFirstIndex(on_the_fly_basic, queries[q_idx]).has_value();
+        if (result_basic != result_on_the_fly) {
+            std::cerr << "Mismatch in query " << q_idx << std::endl;
+            Assert(false);
+        }
+    }
+
+    bench.run([&] {
+        std::size_t match_count{0};
+        std::size_t matched_index_sum{0};
+        for (const GCSFilter::ElementSet& query : queries) {
+            const std::optional<std::size_t> match_idx = MatchAnyBasicFirstIndex(on_the_fly_basic, query);
+            if (match_idx.has_value()) {
+                ++match_count;
+                matched_index_sum += *match_idx;
+            }
+        }
+        ankerl::nanobench::doNotOptimizeAway(match_count);
+        ankerl::nanobench::doNotOptimizeAway(matched_index_sum);
+    });
+}
+
+
+
+static void ResearchBasicOnTheFlySinglePositive(benchmark::Bench& bench) { RunScenarioBasicOnTheFly(bench, SCENARIO_SINGLE_POSITIVE); }
+static void ResearchBasicOnTheFlyWalletLikeMulti(benchmark::Bench& bench) { RunScenarioBasicOnTheFly(bench, SCENARIO_WALLET_MULTI); }
+static void ResearchBasicOnTheFlyStrictNegative(benchmark::Bench& bench) { RunScenarioBasicOnTheFly(bench, SCENARIO_STRICT_NEGATIVE); }
+static void ResearchBasicOnTheFlyMixedPresentAbsent(benchmark::Bench& bench) { RunScenarioBasicOnTheFly(bench, SCENARIO_MIXED_PRESENT_ABSENT); }
+
+static void ResearchHierarchicalOnTheFlySinglePositive(benchmark::Bench& bench) { RunScenarioHierarchicalOnTheFly(bench, SCENARIO_SINGLE_POSITIVE); }
+static void ResearchHierarchicalOnTheFlyWalletLikeMulti(benchmark::Bench& bench) { RunScenarioHierarchicalOnTheFly(bench, SCENARIO_WALLET_MULTI); }
+static void ResearchHierarchicalOnTheFlyStrictNegative(benchmark::Bench& bench) { RunScenarioHierarchicalOnTheFly(bench, SCENARIO_STRICT_NEGATIVE); }
+static void ResearchHierarchicalOnTheFlyMixedPresentAbsent(benchmark::Bench& bench) { RunScenarioHierarchicalOnTheFly(bench, SCENARIO_MIXED_PRESENT_ABSENT); }
+
+BENCHMARK(ResearchBasicOnTheFlySinglePositive);
+BENCHMARK(ResearchBasicOnTheFlyWalletLikeMulti);
+BENCHMARK(ResearchBasicOnTheFlyStrictNegative);
+BENCHMARK(ResearchBasicOnTheFlyMixedPresentAbsent);
+
+BENCHMARK(ResearchHierarchicalOnTheFlySinglePositive);
+BENCHMARK(ResearchHierarchicalOnTheFlyWalletLikeMulti);
+BENCHMARK(ResearchHierarchicalOnTheFlyStrictNegative);
+BENCHMARK(ResearchHierarchicalOnTheFlyMixedPresentAbsent);
 
 } // namespace

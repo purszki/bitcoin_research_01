@@ -9,6 +9,7 @@
 #include <dummyfilter.h>
 #include <uint256.h>
 #include <univalue.h>
+#include <util/full_dataset.h>
 #include <util/fs.h>
 
 #include <string>
@@ -22,6 +23,12 @@ UniValue ReadDataset(const fs::path& path);
 /** Save a research dataset to a JSON file. */
 void WriteDataset(const UniValue& data, const fs::path& path);
 
+/** Load a research dataset into typed representation. */
+FullDataset ReadFullDataset(const fs::path& path);
+
+/** Save a typed research dataset to JSON. */
+void WriteFullDataset(const FullDataset& data, const fs::path& path);
+
 /**
  * Construct a filter of the specified type.
  * Currently supported algos: "basic", "dummy".
@@ -33,11 +40,12 @@ std::vector<unsigned char> BuildFilter(const std::string& algo, const uint256& b
  * Works for both full dataset objects and tx-only objects.
  */
 GCSFilter::ElementSet ExtractElements(const UniValue& block_obj);
+GCSFilter::ElementSet ExtractElements(const FullDataset::Block& block);
 
 /**
  * Generate a full dataset (including filter_hex) from a transaction dataset.
  */
-UniValue GenerateFullDataset(const UniValue& tx_dataset, const std::string& algo);
+FullDataset GenerateFullDataset(const FullDataset& tx_dataset, const std::string& algo);
 
 /**
  * Generate a scenario JSON object for a given algorithm and dataset.
@@ -47,8 +55,19 @@ UniValue GenerateScenario(
     const std::string& algo,
     const std::string& blocks_filename,
     const std::string& tx_filename,
-    const UniValue& full_dataset
+    const FullDataset& full_dataset
 );
+
+/** Convert a UniValue blocks array into internal BlockFilter objects. */
+std::vector<BlockFilter> ParseFilters(const UniValue& blocks_arr);
+std::vector<BlockFilter> ParseFilters(const FullDataset& dataset);
+
+/** Convert a UniValue blocks array into internal BlockFilterDummy objects. */
+std::vector<BlockFilterDummy> ParseFiltersDummy(const UniValue& blocks_arr);
+std::vector<BlockFilterDummy> ParseFiltersDummy(const FullDataset& dataset);
+
+/** Convert a UniValue 'queries' array into ElementSets. */
+std::vector<GCSFilter::ElementSet> ParseQueries(const UniValue& queries_arr);
 
 } // namespace FilterBench
 

@@ -94,10 +94,31 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output", type=Path, default=Path("testnet_data.json"), help="Output dataset path.")
     p.add_argument("--tx-output", type=Path, default=None, help="Optional companion tx dataset path.")
     p.add_argument("--timeout", type=int, default=30, help="HTTP timeout in seconds.")
+    p.add_argument(
+        "--include-prevout-scripts",
+        action="store_true",
+        help="Include spent prevout scriptPubKeys for each non-coinbase input.",
+    )
     return p.parse_args()
 
 
-def tx_summary_from_block(block_v2: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _fetch_prev_tx(rpc: BitcoinRPC, txid: str, tx_cache: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    cached = tx_cache.get(txid)
+    if cached is not None:
+        return cached
+    prev_tx = rpc.call("getrawtransaction", [txid, True])
+    if not isinstance(prev_tx, dict):
+        raise BitcoinRPCError(f"Unexpected getrawtransaction result for txid {txid}")
+    tx_cache[txid] = prev_tx
+    return prev_tx
+
+
+def tx_summary_from_block(
+    rpc: BitcoinRPC,
+    block_v2: Dict[str, Any],
+    include_prevout_scripts: bool,
+    tx_cache: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
     txs: List[Dict[str, Any]] = []
     for tx in block_v2.get("tx", []):
         spks: List[str] = []
@@ -105,7 +126,35 @@ def tx_summary_from_block(block_v2: Dict[str, Any]) -> List[Dict[str, Any]]:
             script = (vout.get("scriptPubKey") or {}).get("hex")
             if script:
                 spks.append(script)
-        txs.append({"txid": tx["txid"], "script_pub_keys": spks})
+        tx_summary: Dict[str, Any] = {"txid": tx["txid"], "script_pub_keys": spks}
+
+        if include_prevout_scripts:
+            prev_spks: List[str] = []
+            for vin in tx.get("vin", []):
+                if "coinbase" in vin:
+                    continue
+                txid = vin.get("txid")
+                vout_index = vin.get("vout")
+                if not isinstance(txid, str) or not isinstance(vout_index, int):
+                    continue
+
+                prevout = vin.get("prevout")
+                if isinstance(prevout, dict):
+                    prev_script = (prevout.get("scriptPubKey") or {}).get("hex")
+                    if isinstance(prev_script, str) and prev_script:
+                        prev_spks.append(prev_script)
+                        continue
+
+                prev_tx = _fetch_prev_tx(rpc, txid, tx_cache)
+                prev_vouts = prev_tx.get("vout", [])
+                if not isinstance(prev_vouts, list) or vout_index < 0 or vout_index >= len(prev_vouts):
+                    raise BitcoinRPCError(f"Invalid prevout reference {txid}:{vout_index}")
+                prev_script = (prev_vouts[vout_index].get("scriptPubKey") or {}).get("hex")
+                if isinstance(prev_script, str) and prev_script:
+                    prev_spks.append(prev_script)
+            tx_summary["spent_prevout_script_pub_keys"] = prev_spks
+
+        txs.append(tx_summary)
     return txs
 
 
@@ -137,6 +186,7 @@ def main() -> int:
 
     blocks: List[Dict[str, Any]] = []
     tx_only_blocks: List[Dict[str, Any]] = []
+    tx_cache: Dict[str, Dict[str, Any]] = {}
 
     for height in range(args.start_height, args.end_height + 1):
         block_hash = rpc.call("getblockhash", [height])
@@ -145,7 +195,12 @@ def main() -> int:
         block_filter = rpc.call("getblockfilter", [block_hash, args.filter_type])
         block_v2 = rpc.call("getblock", [block_hash, 2])
 
-        txs = tx_summary_from_block(block_v2)
+        txs = tx_summary_from_block(
+            rpc=rpc,
+            block_v2=block_v2,
+            include_prevout_scripts=args.include_prevout_scripts,
+            tx_cache=tx_cache,
+        )
         block_obj = {
             "block_height": height,
             "block_hash": block_hash,

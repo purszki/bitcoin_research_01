@@ -31,20 +31,20 @@ int main(int argc, char* argv[])
 
     try {
         std::cout << "Loading dataset: " << fs::PathToString(input_path) << "..." << std::endl;
-        UniValue data = FilterBench::ReadDataset(input_path);
+        FilterBench::FullDataset data = FilterBench::ReadFullDataset(input_path);
 
         std::cout << "Generating full dataset using algo: " << algo << "..." << std::endl;
-        UniValue newData = FilterBench::GenerateFullDataset(data, algo);
+        FilterBench::FullDataset new_data = FilterBench::GenerateFullDataset(data, algo);
 
         std::cout << "Writing blocks to: " << fs::PathToString(output_path) << "..." << std::endl;
-        FilterBench::WriteDataset(newData, output_path);
+        FilterBench::WriteFullDataset(new_data, output_path);
 
         std::cout << "Generating scenario: " << fs::PathToString(scenario_path) << "..." << std::endl;
         UniValue scenario = FilterBench::GenerateScenario(
             algo,
             output_path.filename().string(),
             input_path.filename().string(),
-            newData
+            new_data
         );
         FilterBench::WriteDataset(scenario, scenario_path);
 

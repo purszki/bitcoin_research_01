@@ -50,6 +50,23 @@ def validate_tx(tx: Dict[str, Any], bidx: int, tidx: int, errors: List[str]) -> 
                 if isinstance(spk, str):
                     require(is_hex(spk), f"{base}.script_pub_keys[{sidx}] must be hex", errors)
 
+    if "spent_prevout_script_pub_keys" in tx:
+        prev_spks = tx["spent_prevout_script_pub_keys"]
+        require(isinstance(prev_spks, list), f"{base}.spent_prevout_script_pub_keys must be list", errors)
+        if isinstance(prev_spks, list):
+            for sidx, spk in enumerate(prev_spks):
+                require(
+                    isinstance(spk, str),
+                    f"{base}.spent_prevout_script_pub_keys[{sidx}] must be string",
+                    errors,
+                )
+                if isinstance(spk, str):
+                    require(
+                        is_hex(spk),
+                        f"{base}.spent_prevout_script_pub_keys[{sidx}] must be hex",
+                        errors,
+                    )
+
 
 def validate_block(block: Dict[str, Any], idx: int, verify_hash: bool, errors: List[str], tx_only: bool) -> None:
     required = [
