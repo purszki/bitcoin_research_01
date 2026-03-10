@@ -1,0 +1,952 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Light Client Block Filters Research</title>
+  <meta name="description" content="Research article on light client block filter benchmarking results." />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Source+Sans+3:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #f8f5ef;
+      --paper: #fffdfa;
+      --ink: #22201a;
+      --muted: #6a6257;
+      --line: #dfd8cb;
+      --accent: #8a5b2a;
+      --accent-soft: #efe4d7;
+      --shadow: 0 20px 45px rgba(45, 32, 16, 0.09);
+      --radius: 16px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Source Sans 3", "Trebuchet MS", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 10% 10%, #f2e7d8 0%, transparent 42%),
+        radial-gradient(circle at 90% 0%, #efe7dc 0%, transparent 35%),
+        var(--bg);
+      line-height: 1.65;
+    }
+
+    .container {
+      width: min(1100px, 92vw);
+      margin: 3rem auto;
+    }
+
+    .hero {
+      background: linear-gradient(145deg, #fffdfa 0%, #f8f2e7 100%);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 2.5rem;
+      animation: rise 650ms ease-out;
+      position: relative;
+    }
+
+    h1, h2, h3 {
+      font-family: "Fraunces", Georgia, serif;
+      line-height: 1.2;
+      letter-spacing: -0.01em;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 3.5vw, 3rem);
+      margin: 0 0 0.85rem;
+    }
+
+    h2 {
+      font-size: clamp(1.4rem, 2.2vw, 2rem);
+      margin: 0 0 0.8rem;
+    }
+
+    h3 {
+      font-size: clamp(1.1rem, 1.8vw, 1.35rem);
+      margin: 1.4rem 0 0.55rem;
+      color: #4a3720;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 1.1rem;
+      max-width: 70ch;
+      margin: 0;
+    }
+
+    .meta-line {
+      margin: 0 0 0.75rem;
+      color: var(--muted);
+      font-size: 0.95rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+
+    nav {
+      margin-top: 1.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+
+    nav a {
+      text-decoration: none;
+      color: var(--accent);
+      background: var(--accent-soft);
+      border: 1px solid #e0cfbc;
+      padding: 0.45rem 0.75rem;
+      border-radius: 999px;
+      font-weight: 600;
+      transition: transform 160ms ease, background 160ms ease;
+    }
+
+    nav a:hover {
+      background: #e8d8c3;
+      transform: translateY(-1px);
+    }
+
+    article {
+      margin-top: 1.6rem;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: clamp(1.2rem, 2.4vw, 2.4rem);
+      animation: rise 900ms ease-out;
+    }
+
+    section + section {
+      margin-top: 2rem;
+      padding-top: 2rem;
+      border-top: 1px solid var(--line);
+    }
+
+    p, ul, ol {
+      margin: 0.65rem 0;
+      max-width: 78ch;
+    }
+
+    ul, ol {
+      padding-left: 1.3rem;
+    }
+
+    li + li {
+      margin-top: 0.35rem;
+    }
+
+    a {
+      color: var(--accent);
+    }
+
+    a.source-code-link {
+      text-decoration: none;
+    }
+
+    a.source-code-link:hover code {
+      text-decoration: underline;
+      text-underline-offset: 0.14em;
+    }
+
+    code {
+      font-family: "Cascadia Code", "Source Code Pro", monospace;
+      background: #f3eadf;
+      padding: 0.08rem 0.3rem;
+      border-radius: 4px;
+      font-size: 0.95em;
+    }
+
+    pre {
+      background: #2d2a24;
+      color: #e6e1d6;
+      padding: 1.2rem;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-family: "Cascadia Code", "Source Code Pro", monospace;
+      font-size: 0.9rem;
+      line-height: 1.4;
+      border: 1px solid #3d3a34;
+      margin: 1.5rem 0;
+    }
+
+    details.collapsible {
+      max-width: 100%;
+      margin: 0.8rem 0 0;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fcf7ef;
+      overflow: hidden;
+    }
+
+    details.collapsible summary {
+      cursor: pointer;
+      color: var(--accent);
+      font-weight: 700;
+      padding: 0.95rem 1rem;
+      list-style: none;
+      user-select: none;
+    }
+
+    details.collapsible summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details.collapsible summary::before {
+      content: "+ ";
+    }
+
+    details.collapsible[open] summary::before {
+      content: "- ";
+    }
+
+    .collapsible-body {
+      padding: 0 1rem 1rem;
+    }
+
+    .table-wrap {
+      margin-top: 1rem;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: auto;
+      background: #fffcf7;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      min-width: 760px;
+      font-size: 0.95rem;
+    }
+
+    caption {
+      text-align: left;
+      padding: 1rem;
+      font-weight: 600;
+      color: var(--muted);
+    }
+
+    th, td {
+      padding: 0.6rem 0.75rem;
+      border-bottom: 1px solid #ece3d6;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f4ecdf;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      font-weight: 600;
+    }
+
+    tbody tr:nth-child(even) {
+      background: #fff7ec;
+    }
+
+    .author-panel {
+      margin-top: 2.2rem;
+      padding: 1.8rem;
+      border: 1px solid #d6c7b4;
+      border-left: 6px solid #7b5a37;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #f9f6f1 0%, #f0e8dc 100%);
+      box-shadow: 0 10px 24px rgba(38, 28, 14, 0.08);
+      display: flex;
+      gap: 1.5rem;
+      align-items: center;
+    }
+
+    .author-img {
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 3px solid white;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      flex-shrink: 0;
+    }
+
+    .author-content {
+      flex-grow: 1;
+    }
+
+    .author-name {
+      font-family: "Fraunces", serif;
+      font-size: 1.5rem;
+      margin: 0;
+      color: var(--accent);
+    }
+
+    .author-role {
+      margin: 0.1rem 0 0.8rem;
+      color: #4f463a;
+      font-size: 0.9rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+
+    .author-panel p {
+      margin: 0.45rem 0;
+      max-width: 65ch;
+    }
+
+    footer {
+      margin: 1rem 0 3rem;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .note {
+      padding: 0.9rem 1rem;
+      background: #f3eadf;
+      border: 1px solid #dfcfbb;
+      border-radius: 10px;
+      max-width: 78ch;
+    }
+
+    @keyframes rise {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @media (max-width: 720px) {
+      .container {
+        margin: 1.2rem auto;
+      }
+
+      .hero {
+        padding: 1.2rem;
+      }
+
+      article {
+        padding: 1rem;
+      }
+
+      .author-panel {
+        flex-direction: column;
+        text-align: center;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <header class="hero">
+      <h1>Bitcoin Light Client Block Filter Research</h1>
+      <p class="meta-line">10th of March 2026 • Scope: 50,000 mainnet blocks • 10 wallet scenarios</p>
+      <p class="subtitle">
+        Benchmarking BIP 158 against Binary Fuse filters, with reproducible datasets, wallet scenarios, and ground-truth validation on real mainnet data.
+      </p>
+
+      <nav aria-label="Table of contents">
+        <a href="#intro">Introduction</a>
+        <a href="#process">BIP 158</a>
+        <a href="#fuse">Binary Fuse Filters</a>
+        <a href="#data">Data Extraction</a>
+        <a href="#wallets">Wallet Simulation</a>
+        <a href="#validation">Validation</a>
+        <a href="#benchmarks">Benchmarks</a>
+        <a href="#path">Protocol Path</a>
+        <a href="#conclusion">Conclusion</a>
+      </nav>
+    </header>
+
+    <article>
+        <section id="intro">
+          <h2>Introduction</h2>
+
+          <h3>The problem: private Bitcoin wallets are too slow on mobile</h3>
+          <p>Bitcoin promises self-sovereignty — your money, held by you, not a bank or exchange. To deliver on that promise, a user must be able to check their balance on a phone without leaking addresses to a third-party server. Today that means downloading compact block filters (BIP 158) and scanning them locally. The privacy is excellent, but the cost is real: BIP 158 filters use Golomb-Rice coding, which requires a full sequential decode for every query. On a mobile phone this translates to minutes of heavy CPU work just to scan recent blocks — the phone heats up, the battery drains, and the user waits.</p>
+
+          <h3>What we achieved</h3>
+          <p>We built a reproducible benchmark framework on top of Bitcoin Core and used it to evaluate Binary Fuse filters as an alternative to Golomb-Rice coded sets. Across 50,000 real mainnet blocks and 10 wallet scenarios (from 24 to 480 scripts), Fuse16 filters delivered:</p>
+          <ul>
+            <li><strong>8x to 73x faster client-side queries</strong> — a simple mobile wallet (24 scripts) that takes ~56 seconds with GCS finishes in under 1 second with Fuse16.</li>
+            <li><strong>Comparable filter size</strong> — Fuse16 is actually ~2% smaller than GCS (956 MB vs 972 MB for 50k blocks).</li>
+            <li><strong>Zero false negatives</strong> — validated against ground-truth data for every filter type.</li>
+            <li><strong>Acceptable false-positive overhead</strong> — for typical mobile wallets (24–96 scripts), total bandwidth grows by only 1–8%.</li>
+          </ul>
+          <p>The speedup comes from a fundamental algorithmic difference: GCS requires O(N) sequential decoding per query, while Fuse16 answers each query with exactly 3 random memory lookups — O(1) regardless of filter size.</p>
+
+          <h3>Where we can go with more work</h3>
+          <p>These results are a proof of concept, not a finished protocol. The path forward includes: implementing a Fuse24 (or Fuse20) variant to further reduce false positives; benchmarking on real ARM/mobile hardware not only on PC; writing a native C++ implementation suitable for Bitcoin Core (replacing the current C library wrapper); specifying a deterministic construction and wire format; and ultimately drafting a BIP proposal. The filter would deploy as a new optional type alongside existing BIP 158 filters — no breaking changes, gradual adoption. If the mobile benchmarks confirm the desktop results, Fuse filters could make private, self-sovereign wallet sync practical on everyday phones.</p>
+
+        </section>
+
+        <section id="process">
+          <h2>Summary of BIP 158</h2>
+          <p>In short, the server sends a compact probabilistic summary for each block, which lets the client cheaply test whether a wallet-relevant script element may be present in that block.</p>
+          <p>We refer to the resulting per-block structure as the basic block filter; its encoding uses Golomb-Rice-coded sets (GCS).</p>
+          <p>Under BIP 158, the server builds a compact block filter for each block. From that filter, the client can tell whether the block may contain any script element relevant to the wallet. If the filter signals a match, the block becomes a candidate and the client can inspect it in full.</p>
+          <pre>
+       FULL BLOCKS (Big Data)                BIP 158 FILTERS (Small Data)
+      (Megabytes of TXs)                     (KiloBytes of GCS)
+    ----------------------------           ----------------------------
+    |  [TX1][TX2][TX3][TX4]... |           |                          |
+    |  [TX5][TX6][TX7][TX8]... |           |     Lossy, but           |
+    |  [TX9]....... (1-4 MB)   |  -----&gt;   |  deterministic digest    |
+    |   (typically 1.5 Mb)     |           |        (~20 KB)          |
+    ----------------------------           ----------------------------
+
+                   ^                                     ^
+                   |                                     |
+              "Hard to                             "Easy to
+               download"                            store"
+          </pre>
+          <p>During filter construction, the block's relevant script elements are collected: output scriptPubKeys and the spent prevout scriptPubKeys referenced by inputs. These elements are hashed and then encoded with Golomb-Rice coding (GCS). If a wallet-relevant script element matches the filter, the block must be downloaded for full inspection.</p>
+          <p>Since the result is a lossy digest:</p>
+          <ol>
+            <li>if the filter says 'No match', then the queried script element is not in that block.</li>
+            <li>if it says 'Match possible', then the block is only a candidate: the element may really be there, or this may be a false positive.</li>
+          </ol>
+          <p>The question is: how could we speed up this process on the client side, preferably without increasing the compressed data size too much?</p>
+          <p>Common discussions suggest several methods: XOR, Binary Fuse, or Cuckoo filters.</p>
+          <p>References:</p>
+          <ul>
+            <li><a href="https://en.bitcoin.it/wiki/BIP_0158">https://en.bitcoin.it/wiki/BIP_0158</a></li>
+            <li><a href="https://ellemouton.com/posts/bip158/">https://ellemouton.com/posts/bip158/</a></li>
+          </ul>
+        </section>
+
+        <section id="fuse">
+          <h2>Binary Fuse Filters</h2>
+          <p>Binary fuse filters are a family of probabilistic data structures for approximate set membership, introduced by Thomas Mueller Graf and Daniel Lemire in "Binary Fuse Filters: Fast and Smaller Than Xor Filters" (Journal of Experimental Algorithmics, Vol. 27, 2022; arXiv:2201.01174).</p>
+          <p>A binary fuse filter answers one question: is a given value a member of a set? If the answer is "yes", the value might be in the set (a false positive is possible). If the answer is "no", the value is definitely not in the set — there are no false negatives. This is the same guarantee as GCS filters used in BIP 158, but binary fuse filters answer the question with only 3 memory lookups, regardless of how large the set is.</p>
+          <p>A binary fuse filter is built from a fingerprint function and an array of fingerprints. The algorithm is described in detail in the reference paper. Using a simple lookup method that XORs three fingerprints, the algorithm gives O(1) query time with exactly three memory accesses, regardless of set size.</p>
+          <p>The probability of a false positive depends on the fingerprint width: a k-bit fingerprint gives FPR = 1/2^k. Common configurations are:</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Variant</th><th>Fingerprint</th><th>FPR</th><th>Bits/element</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Fuse8</td><td>8 bits</td><td>1/256</td><td>~9.0</td></tr>
+                <tr><td>Fuse16</td><td>16 bits</td><td>1/65,536</td><td>~18.0</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Proof of Concept Implementation</h3>
+          <p>We use the <code>xor_singleheader</code> C library as a reference implementation of Binary Fuse and XOR filters: <a href="https://github.com/FastFilter/xor_singleheader">https://github.com/FastFilter/xor_singleheader</a></p>
+          <p>It is good for benchmarking, but not yet protocol-ready. Main limitations:</p>
+          <ul>
+            <li>It uses <code>malloc</code>/<code>free</code> internally.</li>
+            <li>Error handling is too weak for critical production code.</li>
+          </ul>
+          <p>To integrate it cleanly, we wrapped it in Bitcoin Core-style C++ classes with the same API shape as <code>BlockFilter</code>. See <code>src/fuse16filter.h/.cpp</code> for Fuse16, <code>src/fuse8filter.h/.cpp</code> for Fuse8, and <code>src/xor8filter.h/.cpp</code> for Xor8. We use PIMPL (pointer-to-implementation) so the large C header does not leak into the rest of the codebase. After a native C++ rewrite, neither <code>malloc</code> nor PIMPL should be needed.</p>
+          <p>Construction must be deterministic. We derive the seed from the block hash. If construction fails (the probabilistic peeling process does not converge), we currently throw an exception. For benchmarking this is acceptable: in practice failure is very rare, and a deterministic retry strategy can handle it. A protocol-grade implementation must define that retry behavior explicitly.</p>
+          <p>Core question: can Binary Fuse filters (and related XOR filters) replace or complement the current GCS-based compact block filters from BIP 158? We evaluate:</p>
+          <ol>
+            <li><strong>Deterministic construction.</strong> Fuse construction is probabilistic, so it may fail and retry with a different seed. Can we define this so every full node still produces exactly the same filter for the same block?</li>
+            <li><strong>Client-side query speed.</strong> On the client, are Fuse filters faster than GCS (Golomb-Rice decode plus per-element hashing)?</li>
+            <li><strong>Network bandwidth.</strong> Is total filter size, and therefore download bandwidth, comparable to BIP 158?</li>
+            <li><strong>False positives.</strong> BIP 158 has a very low false-positive rate (1/784,931). Each false positive is expensive: the client downloads the full block (~1.5 MB) and checks it manually. How do Fuse filters compare?</li>
+          </ol>
+
+          <h3 id="files">Source Files</h3>
+          <p>All research-specific C++ code lives under <code>src/bench/light_client_research/</code> and <code>src/bench/xor_singleheader/</code>, separate from the Bitcoin Core codebase.</p>
+          <details class="collapsible">
+            <summary>Open source file inventory</summary>
+            <div class="collapsible-body">
+              <h3>Filter implementations (<code>src/bench/light_client_research/</code>)</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>File</th><th>Description</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr><td><code>fuse16filter.h</code> / <code>.cpp</code></td><td>C++ wrapper for Binary Fuse16 filter (16-bit fingerprint, FPR 1/65,536)</td></tr>
+                    <tr><td><code>fuse8filter.h</code> / <code>.cpp</code></td><td>C++ wrapper for Binary Fuse8 filter (8-bit, FPR 1/256 — rejected)</td></tr>
+                    <tr><td><code>xor8filter.h</code> / <code>.cpp</code></td><td>C++ wrapper for Xor8 filter (8-bit, FPR 1/256 — rejected)</td></tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <h3>Data loading and streaming (<code>src/bench/light_client_research/</code>)</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>File</th><th>Description</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr><td><code>full_dataset.h</code> / <code>.cpp</code></td><td>JSON dataset parser: <code>FullDataset</code> (string-based) and <code>PreparedDataset</code> (binary, benchmark-ready)</td></tr>
+                    <tr><td><code>tx_block_chunk_store.h</code> / <code>.cpp</code></td><td>Loads <code>.bin</code> chunk file metadata (paths, block ranges) from a directory</td></tr>
+                    <tr><td><code>tx_block_stream_reader.h</code> / <code>.cpp</code></td><td>Streams blocks one at a time from <code>.bin</code> chunks, keeping memory usage low</td></tr>
+                    <tr><td><code>filter_bench.h</code> / <code>.cpp</code></td><td>Shared helpers: wallet scenario loading, filter construction, dataset I/O</td></tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <h3>Benchmarks (<code>src/bench/light_client_research/</code>)</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>File</th><th>Description</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr><td><code>research_bip158.cpp</code></td><td>All research benchmarks: client-side query timing (GCS, Fuse16, Fuse8, Xor8), streaming ground-truth validation</td></tr>
+                    <tr><td><code>filter_demo.cpp</code></td><td>Minimal demo: builds a Fuse16 filter for a single block and queries it</td></tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <h3>Vendored C library (<code>src/bench/xor_singleheader/</code>)</h3>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>File</th><th>Description</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr><td><code>binaryfusefilter.h</code></td><td>Binary Fuse filter C implementation (from <a href="https://github.com/FastFilter/xor_singleheader">xor_singleheader</a>, commit <code>c482686</code>)</td></tr>
+                    <tr><td><code>xorfilter.h</code></td><td>Xor filter C implementation (same upstream library)</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </details>
+        </section>
+
+        <section id="data">
+          <h2>Data Extraction for Profiling and Validation</h2>
+          <p>For benchmarking on real mainnet data, we export block and transaction data from a fully synced Bitcoin Core node into compact binary (<code>.bin</code>) blobs. Each blob stores 250 blocks, including all output <code>scriptPubKeys</code> and spent prevout scripts, which are exactly the elements used by BIP 158 filter construction.</p>
+          <p>This extraction step is needed for three reasons:</p>
+          <ul>
+            <li>We must build each filter from scratch (not from a pre-built index), so construction time can be measured fairly across filter types.</li>
+            <li>The binary format lets us stream blocks one by one, without keeping the full dataset in memory. This is important for large runs (50k+ blocks).</li>
+            <li>Ground-truth validation needs the original scripts, to prove we never miss a real match (zero false negatives).</li>
+          </ul>
+          <p>For exact, step-by-step dataset reproduction from a Bitcoin Core node, see <code>REPRODUCE.md</code>.</p>
+        </section>
+
+        <section id="wallets">
+          <h2>Simulating Wallet Behaviour</h2>
+          <p>To measure real-world filter performance, we simulate how a light client wallet queries block filters. A wallet holds a set of <code>scriptPubKeys</code> and scans every block filter to find blocks that may contain relevant transactions.</p>
+          <p>The number of scripts, and the script-type mix, directly affects query time and false-positive rate.</p>
+          <p>We generate 10 wallet use cases, from a simple mobile wallet (24 scripts) up to a large exchange hot wallet (480 scripts). Each use case has a realistic address-type mix (P2WPKH, P2TR, P2WSH, P2SH, P2PKH) and includes ground-truth data: which blocks in the 50k-block dataset actually contain matching transactions. We use this ground truth to verify zero false negatives and to count false positives exactly.</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Wallet Use Case</th><th>Scripts</th><th>Address Type Mix</th><th>True Hits (50k blocks)</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Simple User</td><td>24</td><td>17 p2wpkh, 5 p2tr, 2 p2sh</td><td>1,034</td></tr>
+                <tr><td>Cold Storage Vault</td><td>60</td><td>42 p2wsh, 12 p2tr, 6 p2sh</td><td>761</td></tr>
+                <tr><td>Legacy Migrator</td><td>90</td><td>45 p2pkh, 27 p2sh, 18 p2wpkh</td><td>18,179</td></tr>
+                <tr><td>Taproot Power User</td><td>96</td><td>82 p2tr, 14 p2wpkh</td><td>7,124</td></tr>
+                <tr><td>CoinJoin Privacy User</td><td>120</td><td>72 p2wpkh, 36 p2tr, 12 p2sh</td><td>8,131</td></tr>
+                <tr><td>Merchant Batch Settler</td><td>140</td><td>63 p2wpkh, 42 p2tr, 28 p2sh, 7 p2pkh</td><td>21,795</td></tr>
+                <tr><td>Lightning Operator</td><td>180</td><td>90 p2wsh, 45 p2tr, 45 p2wpkh</td><td>4,044</td></tr>
+                <tr><td>Custody Wallet</td><td>220</td><td>99 p2wsh, 44 p2tr, 44 p2wpkh, 33 p2sh</td><td>11,216</td></tr>
+                <tr><td>Watch-Only Auditor</td><td>320</td><td>128 p2wpkh, 80 p2tr, 64 p2wsh, 32 p2sh, 16 p2pkh</td><td>23,267</td></tr>
+                <tr><td>Exchange Hot Wallet</td><td>480</td><td>192 p2wpkh, 144 p2tr, 96 p2sh, 48 p2wsh</td><td>27,530</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>The <code>True Hits</code> column shows how many of the 50,000 blocks contain at least one matching transaction for that wallet. A simple user wallet matches about 2% of blocks, while an exchange hot wallet matches about 55%. For most wallets, non-matching blocks are still the majority. This is exactly where filter query speed matters most, because the client checks every block filter, match or not.</p>
+          <p>The wallet scenario files are generated deterministically from block data using <code>benchmark_tools/generate_wallet_use_cases.py</code>. See <code>REPRODUCE.md</code> for details.</p>
+          <p>Disk space required for the 50k-block dataset used in our benchmarks:</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Dataset</th><th>Size</th><th>Files</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Binary block chunks</td><td>~23 GB</td><td>200</td></tr>
+                <tr><td>Wallet use-case scenarios</td><td>~53 MB</td><td>10</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="validation">
+          <h2>Ground-Truth Validation</h2>
+          <p>Any new filter type must satisfy one hard requirement: <strong>zero false negatives</strong>. If a block contains a transaction matching the wallet, the filter must report a match. A single false negative means the wallet misses a payment — this is unacceptable. False positives (the filter says "maybe" but the block has no matching transaction) are tolerated; they only cost an extra block download.</p>
+          <p>We validate correctness and count false positives in two layers:</p>
+          <p><strong>Layer 1: Computing ground truth (Python, offline).</strong> During wallet scenario generation, the script <code>generate_wallet_use_cases.py</code> scans every block in the dataset and records which blocks contain at least one scriptPubKey that belongs to the wallet. This is an exact, brute-force check against the raw transaction data — no filter is involved. The result is a list of block indices stored in the wallet scenario JSON under <code>ground_truth.matched_blocks</code>.</p>
+          <p><strong>Layer 2: Streaming validation (C++, dedicated benchmark).</strong> A dedicated benchmark called <code>StreamingGroundTruthValidation</code> reads blocks one at a time from the binary chunks, constructs a filter for each block using all four filter types (GCS, Fuse16, Fuse8, Xor8), and queries each filter with the wallet's scripts. For each filter type it checks:</p>
+          <ul>
+            <li><strong>False negatives:</strong> For every block index in the ground-truth list, did the filter report a match? If any ground-truth block is missed, the validation throws an exception and stops.</li>
+            <li><strong>False positives:</strong> The count is computed as:<pre>false_positives = candidate_matches - true_hits_in_range</pre></li>
+          </ul>
+          <p>where <code>candidate_matches</code> is the number of blocks the filter flagged, and <code>true_hits_in_range</code> is the number of ground-truth blocks within the scanned range.</p>
+          <p>The streaming approach processes one block at a time and discards its elements immediately, so memory usage stays low even for 50k+ blocks.</p>
+
+          <h3>Running ground-truth validation for all filter types (50k blocks)</h3>
+          <p>A convenience script runs all the wallet use cases against all 4 filter types (GCS, Fuse16, Fuse8, Xor8) and produces a summary table:</p>
+          <pre>./light_client_research/benchmark_tools/false_positive_check.sh 50000</pre>
+          <p>The script iterates over every wallet scenario file, runs the <code>StreamingGroundTruthValidation</code> benchmark for each, parses the output, and checks that <code>false_negatives=0</code> for every filter. If any false negative is detected, the script prints an error banner and exits with a non-zero code. Results are saved to <code>light_client_research/results/false_positive_check_50000.txt</code>.</p>
+          <p>You can also run individual wallets manually:</p>
+          <pre># Single wallet:
+BIN_SCAN_MAX_BLOCKS=50000 ./build-release/bin/bench_bitcoin \
+    -filter='StreamingGroundTruthValidation' -min-time=100
+
+# Specific wallet:
+BIN_SCAN_MAX_BLOCKS=50000 \
+BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wallet_use_case_exchange_hot_wallet.json \
+    ./build-release/bin/bench_bitcoin \
+    -filter='StreamingGroundTruthValidation' -min-time=100</pre>
+          <p>Expected output per filter type:</p>
+          <pre>FUSE16_GROUND_TRUTH scenario=... scanned_blocks=50000 skipped_small=55
+    construction_failures=0 true_hits_in_range=... candidate_matches=...
+    false_negatives=0 false_positives=...</pre>
+          <p>The <code>false_negatives=0</code> field must be zero for every filter type. Any non-zero value indicates a correctness bug.</p>
+        </section>
+
+        <section id="benchmarks">
+          <h2>Benchmarking Methodology and Results</h2>
+
+          <h3>What we measure</h3>
+          <p>The benchmarks simulate what a light client does when it receives block filters over the network: <strong>deserialize the filter from bytes, then query it</strong> with the wallet's scripts. This is the client-side hot path that runs for every block in the chain.</p>
+          <p>For each filter type, the benchmark:</p>
+          <ol>
+            <li><strong>Setup (not timed):</strong> Reads blocks from the binary dataset, constructs filters, and serializes them to byte arrays. This simulates the full node building filters; the client never does this.</li>
+            <li><strong>Timed loop (nanobench):</strong> For each pre-built filter, deserializes from bytes and calls <code>MatchAny(wallet_scripts)</code>. This is repeated many times by nanobench to get stable timing.</li>
+          </ol>
+          <p>For GCS (BIP 158), deserialization reconstructs the Golomb-Rice encoded bitstream and the query performs a full O(N) sequential decode. For Fuse16, deserialization reconstructs the fingerprint array and the query performs 3 array lookups per wallet script — O(1) per element regardless of filter size.</p>
+          <p>The benchmarks also report:</p>
+          <ul>
+            <li><strong>Total filter size</strong> in bytes (sum of all serialized filters)</li>
+            <li><strong>Average filter size</strong> per block</li>
+            <li><strong>Match count</strong> (number of blocks where the filter reports a hit)</li>
+          </ul>
+
+          <h3>How to run</h3>
+          <pre># Build (release mode, required for meaningful timings):
+cmake -B build-release -DCMAKE_BUILD_TYPE=Release -DBUILD_BENCH=ON
+cmake --build build-release --target bench_bitcoin -j $(nproc)
+
+# GCS baseline — 50k blocks, simple_user wallet:
+BIN_SCAN_MAX_BLOCKS=50000 ./build-release/bin/bench_bitcoin \
+    -filter='ResearchBasicClientSideQuery' -min-time=1000
+
+# Fuse16 — 50k blocks, simple_user wallet:
+BIN_SCAN_MAX_BLOCKS=50000 ./build-release/bin/bench_bitcoin \
+    -filter='ResearchFuse16ClientSideQuery' -min-time=1000
+
+# Specific wallet:
+BIN_SCAN_MAX_BLOCKS=50000 \
+BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wallet_use_case_exchange_hot_wallet.json \
+    ./build-release/bin/bench_bitcoin \
+    -filter='ResearchFuse16ClientSideQuery' -min-time=1000
+
+# All wallets, GCS vs Fuse16:
+./light_client_research/benchmark_tools/wallet_benchmark.sh 50000</pre>
+          <p>The <code>wallet_benchmark.sh</code> script runs GCS and Fuse16 benchmarks for all 10 wallet use cases, computes actual false positives from ground-truth data, and saves a summary table to <code>light_client_research/results/wallet_benchmark_results_&lt;blocks&gt;.txt</code>.</p>
+          <p>To run both ground-truth validation and benchmarks in one go:</p>
+          <pre>./light_client_research/benchmark_tools/bench_all.sh 50000</pre>
+
+          <h3>Profiling Results: Fuse8 and Xor8 (20k blocks)</h3>
+          <p>Comparing the speed and FP ratio of all the filters, the results match with the excepted values:</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Filter</th><th>Time ms</th><th>Size MB</th><th>FP</th><th>Speedup</th><th>Viable?</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>GCS</td><td>4,716</td><td>404</td><td>1</td><td>1x</td><td>baseline</td></tr>
+                <tr><td>Fuse16</td><td>61</td><td>397</td><td>4</td><td>77x</td><td>YES</td></tr>
+                <tr><td>Fuse8</td><td>48</td><td>199</td><td>1,733</td><td>99x</td><td>NO</td></tr>
+                <tr><td>Xor8</td><td>47</td><td>190</td><td>1,841</td><td>100x</td><td>NO</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Taking into account the FP rate and the speedup, Fuse16 seems to be a viable alternative to GCS.</p>
+          <p>8-bit filters are ~50% smaller and ~100x faster, but their FPR (1/256) causes thousands of unnecessary full block downloads (~2.6 GB for Fuse8 at 20k blocks). The bandwidth cost far exceeds the size savings.</p>
+
+          <h3>Profiling Results: GCS vs Fuse16 (50k mainnet blocks, desktop)</h3>
+          <p>Client-side query time (deserialize + MatchAny), total filter size, and false-positive count per wallet:</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Wallet</th><th>Scripts</th><th>GCS ms</th><th>F16 ms</th><th>Speedup</th><th>GCS MB</th><th>F16 MB</th><th>GCS FP</th><th>F16 FP</th><th>Bandwidth growth</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Simple User</td><td>24</td><td>10,127</td><td>138</td><td>73x</td><td>972</td><td>956</td><td>3</td><td>19</td><td>+0.8%</td></tr>
+                <tr><td>Cold Storage Vault</td><td>60</td><td>10,562</td><td>246</td><td>43x</td><td>972</td><td>956</td><td>1</td><td>52</td><td>+6.2%</td></tr>
+                <tr><td>Legacy Migrator</td><td>90</td><td>8,261</td><td>268</td><td>31x</td><td>972</td><td>956</td><td>1</td><td>47</td><td>+5.4%</td></tr>
+                <tr><td>Taproot Power User</td><td>96</td><td>9,996</td><td>322</td><td>31x</td><td>972</td><td>956</td><td>4</td><td>68</td><td>+8.2%</td></tr>
+                <tr><td>CoinJoin Privacy User</td><td>120</td><td>9,892</td><td>342</td><td>29x</td><td>972</td><td>956</td><td>3</td><td>79</td><td>+10.0%</td></tr>
+                <tr><td>Merchant Batch Settler</td><td>140</td><td>7,992</td><td>384</td><td>21x</td><td>972</td><td>956</td><td>3</td><td>68</td><td>+8.3%</td></tr>
+                <tr><td>Lightning Operator</td><td>180</td><td>10,771</td><td>571</td><td>19x</td><td>972</td><td>956</td><td>11</td><td>146</td><td>+18.9%</td></tr>
+                <tr><td>Custody Wallet</td><td>220</td><td>9,934</td><td>619</td><td>16x</td><td>972</td><td>956</td><td>8</td><td>144</td><td>+19.1%</td></tr>
+                <tr><td>Watch-Only Auditor</td><td>320</td><td>8,462</td><td>724</td><td>12x</td><td>972</td><td>956</td><td>15</td><td>139</td><td>+17.1%</td></tr>
+                <tr><td>Exchange Hot Wallet</td><td>480</td><td>8,758</td><td>978</td><td>9x</td><td>972</td><td>956</td><td>9</td><td>136</td><td>+17.7%</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>"BW growth" compares total estimated bandwidth: GCS baseline = GCS MB + GCS FP × 1.5 MB, Fuse16 total = F16 MB + F16 FP × 1.5 MB. Growth = (F16 total / GCS baseline − 1). For typical mobile wallets (24–96 scripts): +0.8% to +8.2%. For large wallets (180+): ~+17–19%.</p>
+          <p>Key observations:</p>
+          <ul>
+            <li><strong>Speedup ranges from 73x (24 scripts) to 8x (480 scripts).</strong> GCS query time is nearly constant because the O(N) Golomb decode dominates regardless of how many wallet scripts are checked. Fuse16 query time scales linearly with script count because each script requires O(1) work per filter.</li>
+            <li><strong>Filter size is ~2% smaller for Fuse16</strong> (~956 MB vs 972 MB for 50k blocks). The size is per-block and independent of the wallet.</li>
+          </ul>
+
+          <h3>Limitations and future profiling improvements</h3>
+          <p>The current benchmarks run on a desktop x86 CPU. While the results demonstrate the algorithmic advantage convincingly, there are important gaps:</p>
+          <ol>
+            <li><strong>ARM-based profiling on a real mobile device.</strong> The current results come from a desktop x86 benchmark environment. In practice, ARM processors have different memory hierarchy characteristics (cache sizes, memory latency, branch prediction) that may affect GCS and Fuse16 differently. Real hardware ARM profiling is a must.</li>
+            <li><strong>Measuring actual FP network cost.</strong> The FP bandwidth column is estimated as <code>FP × 1.5 MB</code> (average block size). In a real deployment, the client would download the full block, parse it, and scan it for matching transactions. This has both a bandwidth cost and a CPU cost that we currently estimate but do not measure. A more realistic benchmark would simulate the full FP handling path: filter query, block download (or read from disk), deserialization, and transaction scanning.</li>
+            <li><strong>Skipped blocks with ≤ 2 elements.</strong> The xor_singleheader C library requires a minimum set size of 3 to construct a filter. Blocks with fewer unique script elements (typically empty blocks or blocks with only a coinbase) are skipped during benchmarking. In the 50,000-block dataset, 55 blocks fall into this category. Skipping them has almost no impact on match counts, false positive rates or profiling results. A production implementation would need to handle these blocks (e.g., by padding or using a trivial filter).</li>
+            <li><strong>End-to-end wall-clock measurement.</strong> The current benchmarks measure filter query time in isolation. A production-relevant benchmark would measure the full wallet sync flow: receive filter bytes over a (simulated) network, deserialize, query, and on match download and process the block. This would capture the true user-facing latency including I/O and memory allocation overhead.</li>
+          </ol>
+        </section>
+
+        <section id="path">
+          <h2>Path to Protocol-Ready</h2>
+          <p>The proof-of-concept results are promising (8–73x speedup, comparable filter size, acceptable FP overhead). Below is what remains to go from research prototype to a deployable protocol change.</p>
+          <h3>1. Implement Fuse24 (or Fuse20) and compare with Fuse16</h3>
+          <p>Fuse16 has a FPR of 1/65,536 — roughly 12x higher than GCS (1/784,931). This is acceptable for small wallets but causes measurable extra bandwidth for large ones. A 24-bit fingerprint (Fuse24) would give FPR = 1/16,777,216 — about 21x better than GCS — effectively eliminating false positives as a concern.</p>
+          <p>The tradeoff is filter size: Fuse24 would use ~27 bits/element vs ~20 for Fuse16 and ~21 for GCS. For 50k blocks this would be roughly 1.3 GB vs 956 MB (Fuse16) vs 972 MB (GCS) — about 35% larger than GCS.</p>
+          <p>The question is whether the FP bandwidth savings outweigh the larger filter size. For a wallet with 480 scripts, Fuse16 causes ~224 MB of FP block downloads per 50k blocks. Fuse24 would cause near-zero FP downloads but costs ~330 MB more in filter data. For small wallets the extra filter size is pure overhead; for large wallets it may be a net win.</p>
+          <p>This can only be answered with a full-stack benchmark comparing:</p>
+          <ul>
+            <li><strong>Fuse16</strong>: smaller filters, more FP block downloads</li>
+            <li><strong>Fuse24</strong>: larger filters, near-zero FP block downloads</li>
+            <li><strong>GCS (baseline)</strong>: similar filter size to Fuse16, very low FP, but 8–73x slower queries</li>
+          </ul>
+          <p>The Fuse24 implementation requires extending the xor_singleheader library (or the native C++ rewrite) with a 24-bit fingerprint variant. The query algorithm is identical — still 3 lookups + XOR — so query speed should be comparable to Fuse16.</p>
+          <p>In theory, it's also possible to develop a 'sweet spot' of Fuse20 variant of the algorithm. It'd be less effective CPU-wise as we couldn't use uint16_t as native datatype, but probaby worth the effort of keeping the GCS FP ratio and reducing the CPU cost dramatically.</p>
+
+          <h3>2. Evaluate Cuckoo filters</h3>
+          <p>Cuckoo filters are another commonly suggested alternative to GCS. They offer O(1) lookup (similar to Fuse), support deletion (which Fuse does not), and have well-studied implementations. Before committing to Fuse as the proposal, we should build a proof-of-concept Cuckoo filter implementation using the same benchmark framework and compare. Our guess is that Fuse will be faster, but the evaluation must happen.</p>
+
+          <h3>3. Native C++ implementation of a Binary Fuse Filter</h3>
+          <p>The current implementation wraps the xor_singleheader C library, which has several issues unsuitable for Bitcoin Core:</p>
+          <ul>
+            <li><strong>Memory management</strong>: Uses <code>malloc</code>/<code>free</code> internally. Bitcoin Core expects RAII-based allocation with no raw malloc in consensus-adjacent code.</li>
+            <li><strong>Error handling</strong>: The C library signals errors via return codes and silently leaves structures in undefined states. A production implementation needs exception-safe construction and clear failure semantics.</li>
+            <li><strong>Endianness</strong>: The serialization uses native endianness (<code>memcpy</code> of structs). A wire protocol must specify a fixed byte order (little-endian, matching Bitcoin conventions).</li>
+            <li><strong>PIMPL overhead</strong>: The current wrapper uses <code>unique_ptr&lt;Impl&gt;</code> to hide the C header. A native C++ implementation eliminates this indirection.</li>
+          </ul>
+          <p>The algorithm itself is straightforward (the paper is clear and the C code is ~400 lines). A clean C++ rewrite following Bitcoin Core coding conventions would be moderate effort.</p>
+
+          <h3>4. Deterministic construction specification</h3>
+          <p>Full nodes must produce identical filters for the same block. The current approach derives a deterministic seed from the block hash via SipHash, but throws an exception if the probabilistic peeling process does not converge.</p>
+          <p>A production specification must define:</p>
+          <ul>
+            <li>Exact seed derivation formula (e.g., <code>SipHash-2-4(block_hash, domain_tag)</code>).</li>
+            <li>Deterministic retry: if construction fails with seed S, the next seed is <code>S' = f(S)</code> for a specified function f. The spec must guarantee that all implementations arrive at the same seed and the same filter bytes.</li>
+            <li>Maximum retry count and behavior on exhaustion (in practice, failure is extraordinarily rare — zero failures observed in 50k mainnet blocks).</li>
+          </ul>
+
+          <h3>5. Wire format specification</h3>
+          <p>Define the exact byte layout for Fuse filters on the network:</p>
+          <ul>
+            <li>Fixed-size header: seed (8 bytes), element count (4 bytes), segment parameters (12 bytes), array length (4 bytes) = 28 bytes.</li>
+            <li>Fingerprint array: <code>array_length × 2</code> bytes, little-endian uint16 values.</li>
+            <li>Total: 28 + 2N bytes where N is the array length (~1.125 × element count).</li>
+          </ul>
+          <p>The format must be specified precisely enough that any implementation can deserialize and query filters from any other implementation, bit-for-bit.</p>
+
+          <h3>6. Handling edge cases</h3>
+          <ul>
+            <li><strong>Blocks with 0–1 unique scripts</strong>: Fuse filters require at least 2 elements. The spec must define how to handle empty blocks and single-element blocks (e.g., encode as a trivial filter with a special marker, or fall back to a direct element list).</li>
+            <li><strong>Coinbase-only blocks</strong>: Some blocks contain only a coinbase transaction with a single output. The filter for such blocks needs defined behavior.</li>
+          </ul>
+
+          <h3>7. ARM and mobile benchmarking</h3>
+          <p>Run benchmarks on actual ARM hardware (e.g., Snapdragon 8 Gen series, Apple A-series) to validate or replace the estimated 5x slowdown factor. This should include:</p>
+          <ul>
+            <li>Filter query throughput (deserialize + MatchAny)</li>
+            <li>Memory footprint during sync</li>
+            <li>Battery/thermal impact during a full chain scan</li>
+            <li>Comparison with GCS under identical conditions</li>
+          </ul>
+
+          <h3>8. End-to-end integration test</h3>
+          <p>Build a prototype light client that performs the full sync flow:</p>
+          <ul>
+            <li>Download filter headers and verify the header chain</li>
+            <li>Download filters from peers</li>
+            <li>Query filters against the wallet</li>
+            <li>On match, download the full block and scan transactions</li>
+            <li>Measure total sync time, bandwidth, and FP handling cost</li>
+          </ul>
+          <p>This validates the real-world performance including network latency, I/O, and the actual cost of false positives (not just the estimated <code>FP × 1.5 MB</code>).</p>
+
+          <h3>9. Security audit</h3>
+          <p>Before any protocol deployment, the following need independent review:</p>
+          <ul>
+            <li><strong>Filter construction</strong>: Can an attacker craft block content that causes filter construction to fail or produce a malicious filter?</li>
+            <li><strong>Deserialization</strong>: Buffer validation, integer overflow checks, and rejection of malformed filters. The current C library does minimal validation.</li>
+            <li><strong>Fingerprint collisions</strong>: Verify that the SipHash-based fingerprinting provides sufficient collision resistance against adversarial inputs.</li>
+            <li><strong>DoS resistance</strong>: Ensure that pathological filters cannot cause excessive CPU or memory usage on the client.</li>
+          </ul>
+
+          <h3>10. Server-side benchmarking</h3>
+          <p>The current benchmarks focus on the client side (filter query). Full nodes must also construct and serve filters. Before proposing a protocol change, we need to measure the server-side cost:</p>
+          <ul>
+            <li><strong>Construction time</strong>: How long does it take to build a Fuse filter per block vs GCS? This runs during block validation on full nodes.</li>
+            <li><strong>Index build time</strong>: Time to build the full filter index for the entire chain (~895k blocks). GCS index currently takes several hours.</li>
+            <li><strong>Storage</strong>: Disk space for the complete filter index.</li>
+            <li><strong>Serving throughput</strong>: How many filter requests per second can a node handle? Fuse filters are slightly smaller than GCS, which may improve I/O.</li>
+          </ul>
+
+          <h3>11. BIP proposal</h3>
+          <p>Once the above items are resolved, a formal BIP proposal would specify:</p>
+          <ul>
+            <li>Filter type identifier (new type alongside <code>basic = 0x00</code>)</li>
+            <li>Construction algorithm with deterministic seed derivation</li>
+            <li>Wire format and serialization rules</li>
+            <li>P2P protocol messages (extending BIP 157's <code>getcfilters</code>/<code>cfilters</code>)</li>
+            <li>Filter header chain construction (extending BIP 157's <code>getcfheaders</code>)</li>
+            <li>Test vectors: known block → expected filter bytes</li>
+          </ul>
+
+          <h3>12. Backward compatibility and deployment</h3>
+          <ul>
+            <li>Fuse filters would be a new filter type, not a replacement for existing BIP 158 basic filters. Nodes can serve both types simultaneously.</li>
+            <li>Light clients negotiate the filter type during the P2P handshake.</li>
+            <li>Deployment can be gradual: nodes opt in to building and serving Fuse filters, clients opt in to requesting them.</li>
+          </ul>
+        </section>
+
+        <section id="conclusion">
+          <h2>Conclusion</h2>
+          <p>This research set out to answer a simple question: can we make private Bitcoin wallet sync fast enough for mobile phones? The answer, based on 50,000 mainnet blocks and 10 wallet scenarios, is a clear yes — with the right data structure.</p>
+          <p>Binary Fuse16 filters deliver <strong>8x to 73x faster client-side queries</strong> than the current BIP 158 Golomb-Rice coded sets, while producing <strong>2% smaller filters</strong> and maintaining <strong>zero false negatives</strong>. For typical mobile wallets, the total bandwidth overhead from additional false positives is just 1–8%.</p>
+          <p>The core insight is algorithmic: GCS forces O(N) sequential decoding for every query, while Fuse16 answers with exactly 3 memory lookups — O(1) regardless of how many elements the filter contains. This is not an optimization of the existing approach; it is a fundamentally different tradeoff.</p>
+          <p>Some research questions remain open, which will be easy to answer with the developed profiling framework: evaluating Cuckoo filters as an alternative, and testing Fuse20/Fuse24 variants that could close the false-positive gap with GCS at the cost of larger filters. Beyond that, the path to deployment requires a native C++ implementation, ARM profiling, a deterministic construction spec, a wire format, and a BIP proposal. The filter would deploy as an optional new type — no consensus change, no breaking change, gradual adoption.</p>
+        </section>
+
+
+      <section id="about-author" class="author-panel">
+        <img src="author.jpg" alt="Csaba Purszki" class="author-img">
+        <div class="author-content">
+          <h2 class="author-name">Csaba Purszki</h2>
+          <p class="author-role">C++ Systems Engineer</p>
+          <p>Csaba is adapting his classical computer vision / automotive algorithm integration experiences into the world of Bitcoin within ChainCode Labs' 2026 BOSS Challenge.</p>
+        </div>
+      </section>
+    </article>
+  </main>
+
+  <footer>Chainlabs BOSS 2026 Portfolio Project • Light Client Block Filters</footer>
+
+  <script>
+    const sourceFileMap = {
+      'fuse16filter.h': 'src/bench/light_client_research/fuse16filter.h',
+      'fuse16filter.cpp': 'src/bench/light_client_research/fuse16filter.cpp',
+      'fuse8filter.h': 'src/bench/light_client_research/fuse8filter.h',
+      'fuse8filter.cpp': 'src/bench/light_client_research/fuse8filter.cpp',
+      'xor8filter.h': 'src/bench/light_client_research/xor8filter.h',
+      'xor8filter.cpp': 'src/bench/light_client_research/xor8filter.cpp',
+      'full_dataset.h': 'src/bench/light_client_research/full_dataset.h',
+      'full_dataset.cpp': 'src/bench/light_client_research/full_dataset.cpp',
+      'tx_block_chunk_store.h': 'src/bench/light_client_research/tx_block_chunk_store.h',
+      'tx_block_chunk_store.cpp': 'src/bench/light_client_research/tx_block_chunk_store.cpp',
+      'tx_block_stream_reader.h': 'src/bench/light_client_research/tx_block_stream_reader.h',
+      'tx_block_stream_reader.cpp': 'src/bench/light_client_research/tx_block_stream_reader.cpp',
+      'filter_bench.h': 'src/bench/light_client_research/filter_bench.h',
+      'filter_bench.cpp': 'src/bench/light_client_research/filter_bench.cpp',
+      'research_bip158.cpp': 'src/bench/light_client_research/research_bip158.cpp',
+      'filter_demo.cpp': 'src/bench/light_client_research/filter_demo.cpp',
+      'binaryfusefilter.h': 'src/bench/xor_singleheader/binaryfusefilter.h',
+      'xorfilter.h': 'src/bench/xor_singleheader/xorfilter.h'
+    };
+
+    const sourceRepoBase = 'https://github.com/purszki/bitcoin_research_01/blob/fuse_filter_research/';
+
+    function buildSourceAnchor(label, path) {
+      const anchor = document.createElement('a');
+      const code = document.createElement('code');
+      anchor.href = sourceRepoBase + path;
+      anchor.className = 'source-code-link';
+      anchor.target = '_blank';
+      anchor.rel = 'noopener noreferrer';
+      code.textContent = label;
+      anchor.appendChild(code);
+      return anchor;
+    }
+
+    function replaceCodeWithSourceLink(code, label, path) {
+      code.replaceWith(buildSourceAnchor(label, path));
+    }
+
+    function parseSplitSourceReference(code) {
+      const text = code.textContent.trim();
+      const splitMatch = text.match(/^([A-Za-z0-9_/-]+)\.(h|hpp|cpp)\/\.(h|hpp|cpp)$/);
+      if (!splitMatch) return false;
+
+      const [, stem, firstExt, secondExt] = splitMatch;
+      const firstFile = `${stem}.${firstExt}`;
+      const secondFile = `${stem}.${secondExt}`;
+      const firstPath = sourceFileMap[firstFile];
+      const secondPath = sourceFileMap[secondFile];
+      if (!firstPath || !secondPath) return false;
+
+      const fragment = document.createDocumentFragment();
+      fragment.appendChild(buildSourceAnchor(firstFile, firstPath));
+      fragment.appendChild(document.createTextNode('/'));
+      fragment.appendChild(buildSourceAnchor(`.${secondExt}`, secondPath));
+      code.replaceWith(fragment);
+      return true;
+    }
+
+    function parseStandaloneSourceReference(code) {
+      const text = code.textContent.trim();
+      const path = sourceFileMap[text];
+      if (!path) return false;
+      replaceCodeWithSourceLink(code, text, path);
+      return true;
+    }
+
+    function parsePairedExtensionSuffix(code) {
+      const text = code.textContent.trim();
+      if (!text.match(/^\.(h|hpp|cpp)$/)) return false;
+
+      let previousNode = code.previousSibling;
+      while (previousNode && previousNode.nodeType === Node.TEXT_NODE) {
+        previousNode = previousNode.previousSibling;
+      }
+      if (!previousNode || previousNode.nodeType !== Node.ELEMENT_NODE) return false;
+
+      const previousElement = previousNode;
+      const previousCode = previousElement.tagName === 'CODE'
+        ? previousElement
+        : previousElement.tagName === 'A'
+          ? previousElement.querySelector('code')
+          : null;
+      if (!previousCode) return false;
+
+      const previousText = previousCode.textContent.trim();
+      const stemMatch = previousText.match(/^([A-Za-z0-9_/-]+)\.(h|hpp|cpp)$/);
+      if (!stemMatch) return false;
+
+      const stem = stemMatch[1];
+      const targetFile = `${stem}${text}`;
+      const targetPath = sourceFileMap[targetFile];
+      if (!targetPath) return false;
+
+      replaceCodeWithSourceLink(code, text, targetPath);
+      return true;
+    }
+
+    function makeSourceFilesClickable() {
+      document.querySelectorAll('code').forEach(code => {
+        if (code.closest('a')) return;
+        if (parseSplitSourceReference(code)) return;
+        if (parseStandaloneSourceReference(code)) return;
+        parsePairedExtensionSuffix(code);
+      });
+    }
+
+    makeSourceFilesClickable();
+  </script>
+</body>
+</html>
