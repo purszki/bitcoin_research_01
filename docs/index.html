@@ -89,6 +89,26 @@
       text-transform: uppercase;
     }
 
+    .repo-link {
+      margin: 1rem 0 0;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--muted);
+    }
+
+    .repo-link a {
+      text-decoration: none;
+    }
+
+    .repo-link a:hover {
+      text-decoration: underline;
+      text-underline-offset: 0.14em;
+    }
+
+    .repo-link.compact {
+      font-size: 0.9rem;
+    }
+
     nav {
       margin-top: 1.5rem;
       display: flex;
@@ -369,6 +389,7 @@
     <article>
         <section id="intro">
           <h2>Introduction</h2>
+          <p class="repo-link">Code and dataset: <a href="https://github.com/purszki/bitcoin_research_01/">github.com/purszki/bitcoin_research_01</a></p>
 
           <h3>The problem: private Bitcoin wallets are too slow on mobile</h3>
           <p>Bitcoin promises self-sovereignty — your money, held by you, not a bank or exchange. To deliver on that promise, a user must be able to check their balance on a phone without leaking addresses to a third-party server. Today that means downloading compact block filters (BIP 158) and scanning them locally. The privacy is excellent, but the cost is real: BIP 158 filters use Golomb-Rice coding, which requires a full sequential decode for every query. On a mobile phone this translates to minutes of heavy CPU work just to scan recent blocks — the phone heats up, the battery drains, and the user waits.</p>
@@ -836,7 +857,10 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
     </article>
   </main>
 
-  <footer>Chainlabs BOSS 2026 Portfolio Project • Light Client Block Filters</footer>
+  <footer>
+    Chainlabs BOSS 2026 Portfolio Project • Light Client Block Filters
+    <p class="repo-link compact">Repository: <a href="https://github.com/purszki/bitcoin_research_01/">github.com/purszki/bitcoin_research_01</a></p>
+  </footer>
 
   <script>
     const sourceFileMap = {
