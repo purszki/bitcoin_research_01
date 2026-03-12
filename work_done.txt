@@ -180,7 +180,46 @@ Winner: Binary Fuse16 — 74-77x faster, ~2% smaller, negligible FP overhead.
 Confirmed at 50k blocks: 74x speedup, 12 FP (0.024% of blocks).
 
 ================================================================================
-6. WALLET USE CASE BENCHMARKS (50k mainnet blocks, GCS vs Fuse16)
+6. FUSE20 AND FUSE32 FILTERS
+================================================================================
+
+Fuse20: FPR = 1/1,048,576, ~24 bits/element, WideStorage<20> with bit-packed serialization
+Fuse32: FPR = 1/4,294,967,296, ~36 bits/element, uint32_t fingerprints
+
+Both follow same implementation pattern as Fuse16 with streaming construction.
+Ground truth verification passes at 50k blocks for all filter types.
+
+================================================================================
+7. FUSE16+20 HIERARCHICAL FILTER
+================================================================================
+
+Approach: Two-layer binary fuse filter replacing the old hierarchical GCS design.
+  - Outer: Fuse16 (1/65536 FPR) — scanned for every block
+  - Inner: Fuse20 (1/1048576 FPR) — checked only when Fuse16 matches
+  - Combined FPR: ~1/2^36
+
+Key design decisions:
+  - Domain-separated SipHash keys for inner layer (independent from outer)
+  - Candidate-only optimization: Fuse16 checked per-script individually,
+    only passing scripts forwarded to Fuse20 (avg ~1 candidate vs all scripts)
+  - Adaptive bandwidth: only downloads Fuse20 filters for blocks with Fuse16 matches
+
+10k block results (all wallets):
+  Wallet                    Scripts │       GCS       F16       F20       F32    F16+20
+  simple_user                    24 │    2340.6      30.4      87.6      96.0      30.8
+  cold_storage_vault             60 │    2434.8      56.8     103.0     114.2      57.5
+  taproot_power_user             96 │    2193.4      74.2     125.5     137.2      87.1
+  coinjoin_privacy_user         120 │    2431.4      84.6     141.6     150.1      88.0
+  exchange_hot_wallet           480 │    2507.9     281.1     322.8     344.6     319.5
+
+Key findings:
+  - F16+20 matches Fuse16 speed for small wallets (76x vs 77x for 24 scripts)
+  - F16+20 achieves near-zero FP (0-1) vs Fuse16 (2-48 FP)
+  - F16+20 bandwidth adapts to wallet activity (200-317 MB vs fixed 196 MB)
+  - Best for realistic mobile wallets (24-120 scripts): fast + virtually no FP
+
+================================================================================
+8. WALLET USE CASE BENCHMARKS (50k mainnet blocks, GCS vs Fuse16)
 ================================================================================
 
 Desktop benchmark (client-side: deserialize + MatchAny):
@@ -228,3 +267,30 @@ Key observations:
   - FP bandwidth is the real cost: up to 3.9 GB for exchange_hot_wallet
   - For mobile wallets (24-100 scripts): 13-17 min saved, <1.7 GB FP bandwidth
   - Block scanning (not filtering) dominates Fuse16 total time
+
+================================================================================
+9. FP BLOCK DOWNLOAD BANDWIDTH TRACKING
+================================================================================
+
+Added real block size tracking to all benchmark passes:
+  - Block sizes sourced from .block_sizes.json sidecar files alongside .bin chunks
+  - Each false positive causes a full block download (~1.5-2 MB per block)
+  - All filter benchmarks now report fp_block_download in bytes and MB
+  - Fuse16+20 reports filter-only bandwidth separately from FP block downloads
+
+Benchmark output now includes 5 summary tables:
+  1. CPU (ms) — query time per filter type
+  2. Bandwidth/filter-only (MB) — filter data downloaded
+  3. FP & Speedup vs GCS — false positive counts and speedup ratios
+  4. FP Block Download Waste (MB) — bandwidth wasted on false positive blocks
+  5. Total Bandwidth: Filters + FP Block Downloads (MB) — true network cost
+
+================================================================================
+10. ALL-FILTERS BENCHMARK INFRASTRUCTURE
+================================================================================
+
+Rewrote wallet_benchmark.sh to benchmark all 5 approaches:
+  GCS, Fuse16, Fuse20, Fuse32, Fuse16+20
+
+Previously only compared GCS vs Fuse16. Now provides comprehensive
+comparison across all filter types with consistent bandwidth reporting.

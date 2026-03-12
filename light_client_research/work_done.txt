@@ -350,3 +350,69 @@ Date: 2026-02-27
 - Conclusion:
   - the current hierarchical direction is treated as a dead end for now due to excessive FP behavior
     on the outer layer in the current design.
+
+29) Fuse20 and Fuse32 filter implementations added
+- Implemented `WideStorage<20>` template: uint32_t per slot in memory, bit-packed 20 bits/fingerprint serialization
+- Added `Fuse20Filter` and `Fuse32Filter` classes following same pattern as Fuse16
+- FPR: Fuse20 = 1/1,048,576, Fuse32 = 1/4,294,967,296
+- Added prebuilt data structs and streaming builder support for both
+- Ground truth validation passes for all filter types at 50k blocks
+
+30) Fuse16+20 hierarchical filter with domain-separated keys
+- Replaced old hierarchical GCS approach with a two-layer binary fuse filter design:
+  - Outer layer: Fuse16 (1/65536 FPR) — scanned for all blocks
+  - Inner layer: Fuse20 (1/1048576 FPR) — checked only on Fuse16 match
+- Combined theoretical FPR: ~1/2^36
+- Inner layer uses independent SipHash keys derived via domain separation:
+  - Constants: INNER_DOMAIN_K0 = "Fuse20In", INNER_DOMAIN_K1 = "nerLayer" (as uint64_t)
+  - Key derivation: CSipHasher(INNER_DOMAIN_K0, INNER_DOMAIN_K1).Write(k0).Write(k1).Finalize()
+  - Swapped order for k1: CSipHasher(INNER_DOMAIN_K1, INNER_DOMAIN_K0).Write(k1).Write(k0).Finalize()
+- Renamed from "Hier"/"Hierarchical" to "Fuse16+20" throughout benchmarks and scripts
+
+31) Candidate-only optimization for Fuse16+20
+- Previous approach: MatchAny(all_scripts) on both layers
+- New approach: check Fuse16 per-script individually, collect candidates that pass
+  - Only candidates (scripts that matched Fuse16) are verified against Fuse20
+  - For a typical 180-script wallet, average ~1 candidate per FP block instead of 180
+- Significant speedup for the inner layer check, especially for larger wallets
+
+32) All-filters benchmark script (wallet_benchmark.sh rewrite)
+- Rewrote wallet_benchmark.sh to benchmark all 5 approaches: GCS, Fuse16, Fuse20, Fuse32, Fuse16+20
+- Previously only benchmarked GCS vs Fuse16
+- Updated bench_all.sh description accordingly
+- Output now includes 5 summary tables:
+  - CPU (ms)
+  - Bandwidth/filter-only (MB)
+  - FP & Speedup vs GCS
+  - FP Block Download Waste (MB)
+  - Total Bandwidth: Filters + FP Block Downloads (MB)
+
+33) FP block download bandwidth tracking
+- Added block_size and block_index fields to all Prebuilt*Data structs
+- Block sizes sourced from .block_sizes.json sidecar files loaded during streaming
+- Each benchmark pass now tracks FP block download bytes:
+  - When a filter match is NOT in ground truth, add that block's real size to fp_block_bytes
+- All 6 filter benchmarks (GCS, F16, F20, F32, F8, Xor8) report fp_block_download in output
+- Fuse16+20 reports filter-only bandwidth separately from FP block downloads
+
+34) Bug fixes in bandwidth reporting
+- Finding 1 (High): Fixed double-counting of FP block downloads for Fuse16+20
+  - C++ reported "Total bandwidth (filters + FP blocks)" which already included FP
+  - Shell script added FP again in summary table
+  - Fix: C++ now reports "Filter bandwidth (F16 + F20 on-demand)" as filter-only
+- Finding 2 (Medium): Added warning when block_size is 0 (missing sidecars)
+  - ApplyBlockSizesFromJson silently returns if file doesn't exist
+  - Now prints yellow WARNING to stderr when first block has block_size==0
+- Finding 3 (Medium): Fixed inconsistent bandwidth tables
+  - Flat filters reported filter-only but F16+20 included FP blocks
+  - Now "Bandwidth (MB)" table is filter-only for all; separate "Total Bandwidth" table adds FP uniformly
+
+35) Benchmark results at multiple block counts
+- 50k blocks: full ground-truth validation passed (all PASS)
+- 50k blocks: GCS vs Fuse16 wallet benchmark completed (results in wallet_benchmark_results_50000.txt)
+- 10k blocks: all-filters benchmark completed with Fuse16+20 optimization
+  - Key result: Fuse16+20 matches or beats Fuse16 speed for small wallets (76x vs 77x for simple_user)
+  - Fuse16+20 has zero FP for most wallets while Fuse16 has 2-48 FP
+  - Fuse16+20 bandwidth adapts to wallet activity (200-317 MB vs fixed 196 MB for F16)
+- 5k blocks: quick validation run completed successfully
+- Results stored in light_client_research/results/

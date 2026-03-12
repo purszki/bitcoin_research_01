@@ -4,6 +4,8 @@
 
 #include <bench/light_client_research/tx_block_chunk_store.h>
 
+#include <bench/light_client_research/filter_bench.h>
+
 #include <serialize.h>
 #include <streams.h>
 #include <util/strencodings.h>
@@ -12,6 +14,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <limits>
 #include <optional>
@@ -24,6 +27,7 @@ namespace FilterBench {
 
 namespace {
 constexpr std::array<unsigned char, 8> MAGIC{'L', 'C', 'R', 'T', 'X', 'B', 'I', 'N'};
+constexpr const char* BLOCK_SIZE_JSON_SUFFIX = ".block_sizes.json";
 
 std::vector<unsigned char> ParseHexChecked(std::string_view hex, std::string_view field_name)
 {
@@ -88,6 +92,36 @@ void ValidateChunkRange(const TxBlockChunkStore& chunk)
     if (chunk.block_start != first || chunk.block_end != last) {
         throw std::runtime_error("chunk range does not match block list");
     }
+}
+
+const UniValue& GetRequired(const UniValue& obj, std::string_view key, UniValue::VType type)
+{
+    const UniValue& value = obj.find_value(key);
+    if (value.isNull() || value.getType() != type) {
+        throw std::runtime_error("missing or invalid key: " + std::string(key));
+    }
+    return value;
+}
+
+uint32_t GetRequiredUint32(const UniValue& obj, std::string_view key)
+{
+    const UniValue& value = GetRequired(obj, key, UniValue::VNUM);
+    const int64_t parsed = value.getInt<int64_t>();
+    if (parsed < 0 || parsed > std::numeric_limits<uint32_t>::max()) {
+        throw std::runtime_error("numeric value out of uint32 range: " + std::string(key));
+    }
+    return static_cast<uint32_t>(parsed);
+}
+
+fs::path ChunkPathFromBlockSizeSidecar(const fs::path& sidecar_path)
+{
+    const std::string path_str = fs::PathToString(sidecar_path);
+    const std::string_view suffix{BLOCK_SIZE_JSON_SUFFIX};
+    if (path_str.size() < suffix.size() ||
+        path_str.substr(path_str.size() - suffix.size()) != suffix) {
+        throw std::runtime_error("unsupported block-size sidecar filename: " + path_str);
+    }
+    return fs::PathFromString(path_str.substr(0, path_str.size() - suffix.size()) + ".bin");
 }
 } // namespace
 
@@ -315,6 +349,62 @@ TxBlockChunkStore TxBlockChunkStore::ReadFromFile(const fs::path& path)
     }
     ValidateChunkRange(out);
     return out;
+}
+
+void TxBlockChunkStore::ApplyBlockSizesFromJson(const fs::path& path)
+{
+    ValidateChunkRange(*this);
+
+    if (!fs::exists(path)) {
+        return;
+    }
+
+    const UniValue root = ReadDataset(path);
+    const UniValue& root_obj = root.get_obj();
+
+    const UniValue& source_bin_file = GetRequired(root_obj, "source_bin_file", UniValue::VSTR);
+    const fs::path expected_chunk = fs::PathFromString(source_bin_file.get_str());
+    const fs::path implied_chunk = ChunkPathFromBlockSizeSidecar(path);
+    if (expected_chunk.filename() != implied_chunk.filename()) {
+        throw std::runtime_error("block-size sidecar source_bin_file mismatch: " + fs::PathToString(path));
+    }
+
+    const UniValue& range_obj = GetRequired(root_obj, "range", UniValue::VOBJ);
+    const uint32_t start_height = GetRequiredUint32(range_obj, "start_height");
+    const uint32_t end_height = GetRequiredUint32(range_obj, "end_height");
+    const uint32_t block_count = GetRequiredUint32(range_obj, "block_count");
+    if (start_height != block_start || end_height != block_end || block_count != blocks.size()) {
+        throw std::runtime_error("block-size sidecar range mismatch: " + fs::PathToString(path));
+    }
+
+    const UniValue& blocks_arr = GetRequired(root_obj, "blocks", UniValue::VARR);
+    if (blocks_arr.size() != blocks.size()) {
+        throw std::runtime_error("block-size sidecar block count mismatch: " + fs::PathToString(path));
+    }
+
+    for (size_t i = 0; i < blocks.size(); ++i) {
+        const UniValue& sidecar_block_obj = blocks_arr[i].get_obj();
+        BlockRecord& block = blocks[i];
+
+        const uint32_t height = GetRequiredUint32(sidecar_block_obj, "height");
+        if (height != block.block_height) {
+            throw std::runtime_error("block-size sidecar height mismatch at index " + std::to_string(i));
+        }
+
+        const std::string hash = GetRequired(sidecar_block_obj, "hash", UniValue::VSTR).get_str();
+        if (hash != block.block_hash.GetHex()) {
+            throw std::runtime_error("block-size sidecar hash mismatch at height " + std::to_string(block.block_height));
+        }
+
+        const uint32_t tx_count = GetRequiredUint32(sidecar_block_obj, "tx_count");
+        if (tx_count != block.transactions.size()) {
+            throw std::runtime_error("block-size sidecar tx_count mismatch at height " + std::to_string(block.block_height));
+        }
+
+        block.block_size = GetRequiredUint32(sidecar_block_obj, "size");
+        block.stripped_size = GetRequiredUint32(sidecar_block_obj, "strippedsize");
+        block.block_weight = GetRequiredUint32(sidecar_block_obj, "weight");
+    }
 }
 
 } // namespace FilterBench

@@ -10,6 +10,7 @@
 #include <bench/light_client_research/full_dataset.h>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,9 @@ namespace FilterBench {
  *     - repeated script bytes (CompactSize + raw bytes)
  *     - spent_prevout_script_pub_keys count (CompactSize)
  *     - repeated script bytes (CompactSize + raw bytes)
+ *
+ * Block size metadata is not stored in the binary chunk itself. When available,
+ * it can be overlaid at runtime from a per-chunk JSON sidecar.
  */
 class TxBlockChunkStore
 {
@@ -53,6 +57,9 @@ public:
     struct BlockRecord {
         uint32_t block_height{0};
         uint256 block_hash;
+        std::optional<uint32_t> block_size;
+        std::optional<uint32_t> stripped_size;
+        std::optional<uint32_t> block_weight;
         std::vector<TransactionRecord> transactions;
     };
 
@@ -70,6 +77,7 @@ public:
 
     void WriteToFile(const fs::path& path) const;
     static TxBlockChunkStore ReadFromFile(const fs::path& path);
+    void ApplyBlockSizesFromJson(const fs::path& path);
 };
 
 } // namespace FilterBench

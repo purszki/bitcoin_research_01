@@ -12,6 +12,7 @@
 #include <bench/light_client_research/xor8filter.h>
 #include <univalue.h>
 #include <bench/light_client_research/filter_bench.h>
+#include <crypto/siphash.h>
 #include <util/fs.h>
 #include <bench/light_client_research/tx_block_stream_reader.h>
 
@@ -629,36 +630,48 @@ static void StreamingGroundTruthValidation(benchmark::Bench& bench)
 struct PrebuiltGCSData {
     GCSFilter::Params params;
     std::vector<unsigned char> encoded;
+    uint32_t block_size{0};  // original block size in bytes (from sidecar)
+    std::size_t block_index{0}; // sequential index in the dataset (for ground-truth lookup)
 };
 
 struct PrebuiltFuse16Data {
     uint64_t siphash_k0;
     uint64_t siphash_k1;
     std::vector<unsigned char> serialized;
+    uint32_t block_size{0};
+    std::size_t block_index{0};
 };
 
 struct PrebuiltFuse20Data {
     uint64_t siphash_k0;
     uint64_t siphash_k1;
     std::vector<unsigned char> serialized;
+    uint32_t block_size{0};
+    std::size_t block_index{0};
 };
 
 struct PrebuiltFuse32Data {
     uint64_t siphash_k0;
     uint64_t siphash_k1;
     std::vector<unsigned char> serialized;
+    uint32_t block_size{0};
+    std::size_t block_index{0};
 };
 
 struct PrebuiltFuse8Data {
     uint64_t siphash_k0;
     uint64_t siphash_k1;
     std::vector<unsigned char> serialized;
+    uint32_t block_size{0};
+    std::size_t block_index{0};
 };
 
 struct PrebuiltXor8Data {
     uint64_t siphash_k0;
     uint64_t siphash_k1;
     std::vector<unsigned char> serialized;
+    uint32_t block_size{0};
+    std::size_t block_index{0};
 };
 
 // Per-filter-type prebuild results. Each benchmark builds only what it needs
@@ -695,9 +708,11 @@ struct GCSBenchFilters {
 {
     GCSBenchFilters out;
     if (max_blocks > 0) out.data.reserve(max_blocks);
+    std::size_t block_index{0};
     FilterBench::TxBlockStreamReader reader(chunk_metas, max_blocks);
     while (reader.HasMore()) {
         const auto block = reader.ReadNextBlock();
+        const std::size_t cur_index = block_index++;
         GCSFilter::ElementSet elements = ExtractElementsFromChunkBlock(block);
         if (elements.size() < 2) { ++out.skipped_small; continue; }
         const uint64_t k0 = block.block_hash.GetUint64(0);
@@ -705,10 +720,15 @@ struct GCSBenchFilters {
         GCSFilter::Params params(k0, k1, BASIC_FILTER_P, BASIC_FILTER_M);
         GCSFilter filter(params, elements);
         out.total_bytes += filter.GetEncoded().size();
-        out.data.push_back(PrebuiltGCSData{params, filter.GetEncoded()});
+        out.data.push_back(PrebuiltGCSData{params, filter.GetEncoded(),
+                                           block.block_size.value_or(0), cur_index});
     }
     if (out.data.empty()) {
         throw std::runtime_error("no blocks loaded from bin stream");
+    }
+    if (!out.data.empty() && out.data.front().block_size == 0) {
+        std::cerr << "\033[1;33mWARNING: block_size is 0 — .block_sizes.json sidecars may be missing. "
+                  << "FP block download metrics will be underreported.\033[0m" << std::endl;
     }
     return out;
 }
@@ -755,9 +775,11 @@ BuildExperimentalFiltersStreaming(
 {
     ExperimentalBenchFilters<FilterT, PrebuiltT> out;
     if (max_blocks > 0) out.data.reserve(max_blocks);
+    std::size_t block_index{0};
     FilterBench::TxBlockStreamReader reader(chunk_metas, max_blocks);
     while (reader.HasMore()) {
         const auto block = reader.ReadNextBlock();
+        const std::size_t cur_index = block_index++;
         GCSFilter::ElementSet elements = ExtractElementsFromChunkBlock(block);
         if (elements.size() < 2) { ++out.skipped_small; continue; }
         const uint64_t k0 = block.block_hash.GetUint64(0);
@@ -766,7 +788,8 @@ BuildExperimentalFiltersStreaming(
             FilterT filter(k0, k1, elements);
             auto serialized = filter.Serialize();
             out.total_bytes += serialized.size();
-            out.data.push_back(PrebuiltT{k0, k1, std::move(serialized)});
+            out.data.push_back(PrebuiltT{k0, k1, std::move(serialized),
+                                         block.block_size.value_or(0), cur_index});
         } catch (const std::runtime_error& e) {
             ++out.construction_failures;
             std::cerr << "\033[1;33mFilter construction failed (elements=" << elements.size()
@@ -775,6 +798,10 @@ BuildExperimentalFiltersStreaming(
     }
     if (out.data.empty()) {
         throw std::runtime_error("no filters built from bin stream");
+    }
+    if (!out.data.empty() && out.data.front().block_size == 0) {
+        std::cerr << "\033[1;33mWARNING: block_size is 0 — .block_sizes.json sidecars may be missing. "
+                  << "FP block download metrics will be underreported.\033[0m" << std::endl;
     }
     return out;
 }
@@ -793,17 +820,26 @@ static void ResearchBasicClientSideQuery(benchmark::Bench& bench)
     GCSBenchFilters filters = BuildGCSFiltersStreaming(chunk_metas, scan_max_blocks);
 
     const double total_mb = static_cast<double>(filters.total_bytes) / (1024.0 * 1024.0);
-    // One-shot pass to count matches (for FP reporting).
+    // One-shot pass to count matches and FP block bandwidth.
     std::size_t total_matches{0};
+    std::size_t fp_block_bytes{0};
     for (const PrebuiltGCSData& d : filters.data) {
         const GCSFilter filter(d.params, d.encoded, /*skip_decode_check=*/true);
-        if (filter.MatchAny(wallet_scripts)) ++total_matches;
+        if (filter.MatchAny(wallet_scripts)) {
+            ++total_matches;
+            if (scenario.has_ground_truth &&
+                scenario.ground_truth_block_indices.count(d.block_index) == 0) {
+                fp_block_bytes += d.block_size;
+            }
+        }
     }
+    const double fp_block_mb = static_cast<double>(fp_block_bytes) / (1024.0 * 1024.0);
     std::cout << "[BasicClientQuery] " << filters.data.size() << " GCS filters"
               << " (skipped " << filters.skipped_small << " small)"
               << ", total=" << filters.total_bytes << " bytes (" << total_mb << " MB)"
               << ", avg=" << (filters.data.empty() ? 0 : filters.total_bytes / filters.data.size()) << " bytes/filter"
               << ", matches=" << total_matches
+              << ", fp_block_download=" << fp_block_mb << " MB"
               << std::endl;
 
     bench.name("ResearchBasicClientSideQuery");
@@ -834,16 +870,25 @@ static void ResearchFuse16ClientSideQuery(benchmark::Bench& bench)
 
     const double total_mb = static_cast<double>(filters.total_bytes) / (1024.0 * 1024.0);
     std::size_t total_matches{0};
+    std::size_t fp_block_bytes{0};
     for (const PrebuiltFuse16Data& d : filters.data) {
         Fuse16Filter filter = Fuse16Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
-        if (filter.MatchAny(wallet_scripts)) ++total_matches;
+        if (filter.MatchAny(wallet_scripts)) {
+            ++total_matches;
+            if (scenario.has_ground_truth &&
+                scenario.ground_truth_block_indices.count(d.block_index) == 0) {
+                fp_block_bytes += d.block_size;
+            }
+        }
     }
+    const double fp_block_mb = static_cast<double>(fp_block_bytes) / (1024.0 * 1024.0);
     std::cout << "[Fuse16ClientQuery] " << filters.data.size() << " Fuse16 filters"
               << " (skipped " << filters.skipped_small << " small, "
               << filters.construction_failures << " failed)"
               << ", total=" << filters.total_bytes << " bytes (" << total_mb << " MB)"
               << ", avg=" << (filters.data.empty() ? 0 : filters.total_bytes / filters.data.size()) << " bytes/filter"
               << ", matches=" << total_matches
+              << ", fp_block_download=" << fp_block_mb << " MB"
               << std::endl;
 
     bench.name("ResearchFuse16ClientSideQuery");
@@ -874,16 +919,25 @@ static void ResearchFuse20ClientSideQuery(benchmark::Bench& bench)
 
     const double total_mb = static_cast<double>(filters.total_bytes) / (1024.0 * 1024.0);
     std::size_t total_matches{0};
+    std::size_t fp_block_bytes{0};
     for (const PrebuiltFuse20Data& d : filters.data) {
         Fuse20Filter filter = Fuse20Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
-        if (filter.MatchAny(wallet_scripts)) ++total_matches;
+        if (filter.MatchAny(wallet_scripts)) {
+            ++total_matches;
+            if (scenario.has_ground_truth &&
+                scenario.ground_truth_block_indices.count(d.block_index) == 0) {
+                fp_block_bytes += d.block_size;
+            }
+        }
     }
+    const double fp_block_mb = static_cast<double>(fp_block_bytes) / (1024.0 * 1024.0);
     std::cout << "[Fuse20ClientQuery] " << filters.data.size() << " Fuse20 filters"
               << " (skipped " << filters.skipped_small << " small, "
               << filters.construction_failures << " failed)"
               << ", total=" << filters.total_bytes << " bytes (" << total_mb << " MB)"
               << ", avg=" << (filters.data.empty() ? 0 : filters.total_bytes / filters.data.size()) << " bytes/filter"
               << ", matches=" << total_matches
+              << ", fp_block_download=" << fp_block_mb << " MB"
               << std::endl;
 
     bench.name("ResearchFuse20ClientSideQuery");
@@ -914,16 +968,25 @@ static void ResearchFuse32ClientSideQuery(benchmark::Bench& bench)
 
     const double total_mb = static_cast<double>(filters.total_bytes) / (1024.0 * 1024.0);
     std::size_t total_matches{0};
+    std::size_t fp_block_bytes{0};
     for (const PrebuiltFuse32Data& d : filters.data) {
         Fuse32Filter filter = Fuse32Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
-        if (filter.MatchAny(wallet_scripts)) ++total_matches;
+        if (filter.MatchAny(wallet_scripts)) {
+            ++total_matches;
+            if (scenario.has_ground_truth &&
+                scenario.ground_truth_block_indices.count(d.block_index) == 0) {
+                fp_block_bytes += d.block_size;
+            }
+        }
     }
+    const double fp_block_mb = static_cast<double>(fp_block_bytes) / (1024.0 * 1024.0);
     std::cout << "[Fuse32ClientQuery] " << filters.data.size() << " Fuse32 filters"
               << " (skipped " << filters.skipped_small << " small, "
               << filters.construction_failures << " failed)"
               << ", total=" << filters.total_bytes << " bytes (" << total_mb << " MB)"
               << ", avg=" << (filters.data.empty() ? 0 : filters.total_bytes / filters.data.size()) << " bytes/filter"
               << ", matches=" << total_matches
+              << ", fp_block_download=" << fp_block_mb << " MB"
               << std::endl;
 
     bench.name("ResearchFuse32ClientSideQuery");
@@ -954,16 +1017,25 @@ static void ResearchFuse8ClientSideQuery(benchmark::Bench& bench)
 
     const double total_mb = static_cast<double>(filters.total_bytes) / (1024.0 * 1024.0);
     std::size_t total_matches{0};
+    std::size_t fp_block_bytes{0};
     for (const PrebuiltFuse8Data& d : filters.data) {
         Fuse8Filter filter = Fuse8Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
-        if (filter.MatchAny(wallet_scripts)) ++total_matches;
+        if (filter.MatchAny(wallet_scripts)) {
+            ++total_matches;
+            if (scenario.has_ground_truth &&
+                scenario.ground_truth_block_indices.count(d.block_index) == 0) {
+                fp_block_bytes += d.block_size;
+            }
+        }
     }
+    const double fp_block_mb = static_cast<double>(fp_block_bytes) / (1024.0 * 1024.0);
     std::cout << "[Fuse8ClientQuery] " << filters.data.size() << " Fuse8 filters"
               << " (skipped " << filters.skipped_small << " small, "
               << filters.construction_failures << " failed)"
               << ", total=" << filters.total_bytes << " bytes (" << total_mb << " MB)"
               << ", avg=" << (filters.data.empty() ? 0 : filters.total_bytes / filters.data.size()) << " bytes/filter"
               << ", matches=" << total_matches
+              << ", fp_block_download=" << fp_block_mb << " MB"
               << std::endl;
 
     bench.name("ResearchFuse8ClientSideQuery");
@@ -993,20 +1065,27 @@ static void ResearchXor8ClientSideQuery(benchmark::Bench& bench)
     auto filters = BuildExperimentalFiltersStreaming<Xor8Filter, PrebuiltXor8Data>(chunk_metas, scan_max_blocks);
 
     const double total_mb = static_cast<double>(filters.total_bytes) / (1024.0 * 1024.0);
+    std::size_t total_matches{0};
+    std::size_t fp_block_bytes{0};
+    for (const PrebuiltXor8Data& d : filters.data) {
+        Xor8Filter filter = Xor8Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
+        if (filter.MatchAny(wallet_scripts)) {
+            ++total_matches;
+            if (scenario.has_ground_truth &&
+                scenario.ground_truth_block_indices.count(d.block_index) == 0) {
+                fp_block_bytes += d.block_size;
+            }
+        }
+    }
+    const double fp_block_mb = static_cast<double>(fp_block_bytes) / (1024.0 * 1024.0);
     std::cout << "[Xor8ClientQuery] " << filters.data.size() << " Xor8 filters"
               << " (skipped " << filters.skipped_small << " small, "
               << filters.construction_failures << " failed)"
               << ", total=" << filters.total_bytes << " bytes (" << total_mb << " MB)"
               << ", avg=" << (filters.data.empty() ? 0 : filters.total_bytes / filters.data.size()) << " bytes/filter"
+              << ", matches=" << total_matches
+              << ", fp_block_download=" << fp_block_mb << " MB"
               << std::endl;
-
-    // One-shot match count for FP reporting
-    std::size_t total_matches{0};
-    for (const PrebuiltXor8Data& d : filters.data) {
-        Xor8Filter filter = Xor8Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
-        if (filter.MatchAny(wallet_scripts)) ++total_matches;
-    }
-    std::cout << "[Xor8ClientQuery] matches=" << total_matches << std::endl;
 
     bench.name("ResearchXor8ClientSideQuery");
     bench.run([&] {
@@ -1021,94 +1100,147 @@ static void ResearchXor8ClientSideQuery(benchmark::Bench& bench)
     });
 }
 
-static void ResearchHierarchicalFuse16_32(benchmark::Bench& bench)
+static void ResearchFuse16_20(benchmark::Bench& bench)
 {
     const fs::path bin_dir = GetEnvPath("HIER_BIN_DIR", DEFAULT_BIN_STREAM_DIR);
     const fs::path wallet_scenario = GetEnvPath("BIN_WALLET_SCENARIO", DEFAULT_BIN_WALLET_SCENARIO);
     const std::size_t scan_max_blocks = GetEnvSizeT("BIN_SCAN_MAX_BLOCKS", 1000);
 
-    std::cout << "[Hierarchical F16+F32] Building paired filters for " << scan_max_blocks << " blocks..." << std::endl;
+    std::cout << "[Hierarchical F16+F20] Building paired filters for " << scan_max_blocks << " blocks..." << std::endl;
     const std::vector<FilterBench::BinChunkMeta> chunk_metas = FilterBench::LoadBinChunkMetas(bin_dir);
     const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
     const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
 
-    // Build paired Fuse16 + Fuse32 in a single streaming pass.
+    // Domain-separation constant for deriving independent inner-layer keys.
+    static constexpr uint64_t INNER_DOMAIN_K0 = 0x46757365323049'6EUL; // "Fuse20In"
+    static constexpr uint64_t INNER_DOMAIN_K1 = 0x6E65724C617965'72UL; // "nerLayer"
+
+    // Build paired Fuse16 + Fuse20 in a single streaming pass.
+    // Inner layer uses independently derived SipHash keys.
     struct PairedFilters {
         PrebuiltFuse16Data f16;
-        PrebuiltFuse32Data f32;
+        PrebuiltFuse20Data f20;
     };
     std::vector<PairedFilters> paired;
     std::size_t skipped_small{0};
     std::size_t construction_failures{0};
     std::size_t f16_total_bytes{0};
-    std::size_t f32_total_bytes{0};
+    std::size_t f20_total_bytes{0};
 
     if (scan_max_blocks > 0) paired.reserve(scan_max_blocks);
+    std::size_t block_index{0};
     FilterBench::TxBlockStreamReader reader(chunk_metas, scan_max_blocks);
     while (reader.HasMore()) {
         const auto block = reader.ReadNextBlock();
+        const std::size_t cur_index = block_index++;
         GCSFilter::ElementSet elements = ExtractElementsFromChunkBlock(block);
         if (elements.size() < 2) { ++skipped_small; continue; }
+
+        // Outer layer: keys directly from block hash (same as standalone Fuse16).
         const uint64_t k0 = block.block_hash.GetUint64(0);
         const uint64_t k1 = block.block_hash.GetUint64(1);
+        const uint32_t bsz = block.block_size.value_or(0);
+
+        // Inner layer: derive independent keys via SipHash with domain separation.
+        const uint64_t inner_k0 = CSipHasher(INNER_DOMAIN_K0, INNER_DOMAIN_K1)
+            .Write(k0).Write(k1).Finalize();
+        const uint64_t inner_k1 = CSipHasher(INNER_DOMAIN_K1, INNER_DOMAIN_K0)
+            .Write(k1).Write(k0).Finalize();
+
         try {
             Fuse16Filter f16(k0, k1, elements);
-            Fuse32Filter f32(k0, k1, elements);
+            Fuse20Filter f20(inner_k0, inner_k1, elements);
             auto ser16 = f16.Serialize();
-            auto ser32 = f32.Serialize();
+            auto ser20 = f20.Serialize();
             f16_total_bytes += ser16.size();
-            f32_total_bytes += ser32.size();
+            f20_total_bytes += ser20.size();
             paired.push_back(PairedFilters{
-                PrebuiltFuse16Data{k0, k1, std::move(ser16)},
-                PrebuiltFuse32Data{k0, k1, std::move(ser32)},
+                PrebuiltFuse16Data{k0, k1, std::move(ser16), bsz, cur_index},
+                PrebuiltFuse20Data{inner_k0, inner_k1, std::move(ser20), bsz, cur_index},
             });
         } catch (...) { ++construction_failures; }
     }
 
     // One-shot pass to measure match/FP stats and bandwidth.
-    std::size_t f16_matches{0};
-    std::size_t f32_checks{0};
+    // Optimized: Fuse16 checks scripts individually, only candidates
+    // that passed Fuse16 are verified against Fuse20.
+    std::size_t f16_block_matches{0};
+    std::size_t f20_checks{0};
     std::size_t final_matches{0};
-    std::size_t f32_bandwidth{0};
+    std::size_t f20_bandwidth{0};
+    std::size_t total_f16_script_hits{0};
+    std::size_t fp_block_bytes{0};
     for (const PairedFilters& p : paired) {
         Fuse16Filter f16 = Fuse16Filter::Deserialize(p.f16.siphash_k0, p.f16.siphash_k1, p.f16.serialized);
-        if (f16.MatchAny(wallet_scripts)) {
-            ++f16_matches;
-            // Fuse16 hit → check Fuse32 (this is the only time we "download" Fuse32)
-            ++f32_checks;
-            f32_bandwidth += p.f32.serialized.size();
-            Fuse32Filter f32 = Fuse32Filter::Deserialize(p.f32.siphash_k0, p.f32.siphash_k1, p.f32.serialized);
-            if (f32.MatchAny(wallet_scripts)) {
-                ++final_matches;
+
+        // Check each script individually against Fuse16, collect candidates.
+        std::vector<Fuse16Filter::Element> candidates;
+        for (const auto& script : wallet_scripts) {
+            if (f16.Match(script)) {
+                candidates.push_back(script);
+            }
+        }
+        if (candidates.empty()) continue;
+
+        ++f16_block_matches;
+        total_f16_script_hits += candidates.size();
+
+        // Only download and check Fuse20 for the candidate scripts.
+        ++f20_checks;
+        f20_bandwidth += p.f20.serialized.size();
+        Fuse20Filter f20 = Fuse20Filter::Deserialize(p.f20.siphash_k0, p.f20.siphash_k1, p.f20.serialized);
+        bool confirmed = false;
+        for (const auto& candidate : candidates) {
+            if (f20.Match(candidate)) {
+                confirmed = true;
+                break;
+            }
+        }
+        if (confirmed) {
+            ++final_matches;
+            // If this final match is not in ground truth, it's an FP block download.
+            if (scenario.has_ground_truth &&
+                scenario.ground_truth_block_indices.count(p.f16.block_index) == 0) {
+                fp_block_bytes += p.f16.block_size;
             }
         }
     }
 
     const double f16_mb = static_cast<double>(f16_total_bytes) / (1024.0 * 1024.0);
-    const double f32_bw_mb = static_cast<double>(f32_bandwidth) / (1024.0 * 1024.0);
-    const double total_bw_mb = f16_mb + f32_bw_mb;
-    std::cout << "[Hierarchical F16+F32] " << paired.size() << " paired filters"
+    const double f20_bw_mb = static_cast<double>(f20_bandwidth) / (1024.0 * 1024.0);
+    const double filter_total_mb = f16_mb + f20_bw_mb;
+    const double fp_block_mb = static_cast<double>(fp_block_bytes) / (1024.0 * 1024.0);
+    std::cout << "[Fuse16+20] " << paired.size() << " paired filters"
               << " (skipped " << skipped_small << " small, " << construction_failures << " failed)"
-              << "\n  Fuse16: " << f16_total_bytes << " bytes (" << f16_mb << " MB)"
-              << ", avg=" << (paired.empty() ? 0 : f16_total_bytes / paired.size()) << " bytes/filter"
-              << "\n  Fuse16 matches: " << f16_matches
-              << " → Fuse32 checks: " << f32_checks
-              << " → final matches: " << final_matches
-              << " (eliminated " << (f16_matches - final_matches) << " false positives)"
-              << "\n  Fuse32 bandwidth (on-demand): " << f32_bandwidth << " bytes (" << f32_bw_mb << " MB)"
-              << "\n  Total bandwidth: " << (f16_total_bytes + f32_bandwidth) << " bytes (" << total_bw_mb << " MB)"
+              << ", total_filter=" << filter_total_mb << " MB"
+              << " (F16=" << f16_mb << " MB + F20_ondemand=" << f20_bw_mb << " MB)"
+              << ", matches=" << final_matches
+              << ", f16_block_matches=" << f16_block_matches
+              << ", eliminated=" << (f16_block_matches - final_matches)
+              << ", fp_block_download=" << fp_block_mb << " MB"
               << std::endl;
 
-    bench.name("ResearchHierarchicalFuse16_32");
+    bench.name("ResearchFuse16_20");
     bench.run([&] {
         std::size_t match_count{0};
         for (const PairedFilters& p : paired) {
             Fuse16Filter f16 = Fuse16Filter::Deserialize(p.f16.siphash_k0, p.f16.siphash_k1, p.f16.serialized);
-            if (f16.MatchAny(wallet_scripts)) {
-                // Fuse16 candidate → verify with Fuse32
-                Fuse32Filter f32 = Fuse32Filter::Deserialize(p.f32.siphash_k0, p.f32.siphash_k1, p.f32.serialized);
-                if (f32.MatchAny(wallet_scripts)) {
+
+            // Fuse16: check each script, collect candidates.
+            std::vector<Fuse16Filter::Element> candidates;
+            for (const auto& script : wallet_scripts) {
+                if (f16.Match(script)) {
+                    candidates.push_back(script);
+                }
+            }
+            if (candidates.empty()) continue;
+
+            // Fuse20: only verify the Fuse16 candidates.
+            Fuse20Filter f20 = Fuse20Filter::Deserialize(p.f20.siphash_k0, p.f20.siphash_k1, p.f20.serialized);
+            for (const auto& candidate : candidates) {
+                if (f20.Match(candidate)) {
                     ++match_count;
+                    break;
                 }
             }
         }
@@ -1123,7 +1255,7 @@ BENCHMARK(ResearchBasicClientSideQuery);
 BENCHMARK(ResearchFuse16ClientSideQuery);
 BENCHMARK(ResearchFuse20ClientSideQuery);
 BENCHMARK(ResearchFuse32ClientSideQuery);
-BENCHMARK(ResearchHierarchicalFuse16_32);
+BENCHMARK(ResearchFuse16_20);
 BENCHMARK(ResearchFuse8ClientSideQuery);
 BENCHMARK(ResearchXor8ClientSideQuery);
 

@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <type_traits>
 #include <vector>
 
 #ifndef XOR_MAX_ITERATIONS
@@ -628,6 +629,14 @@ private:
   }
 
   void deserialize_fingerprints(const char *buf) {
+    deserialize_fingerprints_impl(
+        buf,
+        std::integral_constant<bool,
+            FingerprintBits == 20 &&
+            std::is_same<ValueType, uint32_t>::value>());
+  }
+
+  void deserialize_fingerprints_impl(const char *buf, std::false_type) {
     for (uint32_t i = 0; i < ArrayLength; i++) {
       uint64_t bit_offset = (uint64_t)i * FingerprintBits;
       uint32_t byte_idx = (uint32_t)(bit_offset >> 3);
@@ -636,6 +645,32 @@ private:
       uint64_t raw = 0;
       memcpy(&raw, buf + byte_idx, bytes_needed);
       storage_.set(i, (uint32_t)(raw >> shift) & fp_mask());
+    }
+  }
+
+  void deserialize_fingerprints_impl(const char *buf, std::true_type) {
+    const uint8_t *src = (const uint8_t *)(const void *)buf;
+    uint32_t *dst = (uint32_t *)storage_.raw_ptr();
+    uint32_t i = 0;
+
+    // Fuse20 uses a fixed 2-values-per-5-bytes layout.
+    for (; i + 1 < ArrayLength; i += 2, src += 5) {
+      uint64_t packed =
+          (uint64_t)src[0] |
+          ((uint64_t)src[1] << 8U) |
+          ((uint64_t)src[2] << 16U) |
+          ((uint64_t)src[3] << 24U) |
+          ((uint64_t)src[4] << 32U);
+      dst[i] = (uint32_t)(packed & fp_mask());
+      dst[i + 1] = (uint32_t)((packed >> 20U) & fp_mask());
+    }
+
+    if (i < ArrayLength) {
+      uint32_t packed =
+          (uint32_t)src[0] |
+          ((uint32_t)src[1] << 8U) |
+          ((uint32_t)src[2] << 16U);
+      dst[i] = packed & fp_mask();
     }
   }
 

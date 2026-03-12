@@ -14,6 +14,13 @@
 namespace FilterBench {
 
 namespace {
+fs::path BlockSizeSidecarPath(const fs::path& chunk_path)
+{
+    fs::path sidecar = chunk_path.parent_path();
+    sidecar /= fs::PathFromString(fs::PathToString(chunk_path.stem()) + ".block_sizes.json");
+    return sidecar;
+}
+
 bool ParseUint32(std::string_view text, uint32_t& out)
 {
     if (text.empty()) return false;
@@ -133,6 +140,7 @@ void TxBlockStreamReader::LoadCurrentChunk()
         throw std::runtime_error("chunk index out of range during load");
     }
     m_current = TxBlockChunkStore::ReadFromFile(m_metas[m_chunk_index].path);
+    m_current.ApplyBlockSizesFromJson(BlockSizeSidecarPath(m_metas[m_chunk_index].path));
     ValidateLoadedChunk(m_current, m_metas[m_chunk_index]);
 }
 
