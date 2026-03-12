@@ -28,6 +28,9 @@ extract_bitcoin_data.py   →  tx-only JSON (temporary, ~100 GB for 50k blocks)
 convert_tx_json_to_bin_chunks.py  →  binary .bin chunks (final dataset)
       │
       ▼
+collect_bin_block_sizes.py  →  per-bin block size JSON sidecars
+      │
+      ▼
 generate_wallet_use_cases.py  →  wallet scenario JSON files
 ```
 
@@ -88,7 +91,34 @@ After verification, the tx-only JSON can be deleted to reclaim disk space:
 rm mainnet_datasets/mainnet_latest_50k_tx.json
 ```
 
-## Step 3: Generate wallet use-case files
+## Step 3: Collect per-bin block size metadata
+
+Fetch block sizes for the exact block ranges covered by the `.bin` files and
+write one JSON sidecar per chunk:
+
+```bash
+python3 benchmark_tools/collect_bin_block_sizes.py \
+    --bin-dir mainnet_datasets/latest_50k_bins_250 \
+    --datadir ~/.bitcoin-mainnet \
+    --conf mainnet_datasets/bitcoin.conf
+```
+
+This produces sidecar files named
+`mainnet_<start>-<end>.block_sizes.json` beside each `.bin` file.
+
+The script prefers cookie authentication from the datadir and falls back to
+`rpcuser` / `rpcpassword` from `bitcoin.conf` if no cookie is present.
+
+The sidecars contain per-block:
+
+- height
+- hash
+- size
+- strippedsize
+- weight
+- tx_count
+
+## Step 4: Generate wallet use-case files
 
 Generate the 10 wallet scenario files used by the benchmarks:
 
@@ -102,7 +132,7 @@ python3 benchmark_tools/generate_wallet_use_cases.py \
 The `--seed` value ensures deterministic script generation. Using the same
 seed with the same block range produces identical wallet files.
 
-## Step 4: Run benchmarks
+## Step 5: Run benchmarks
 
 Build the benchmark binary (release mode):
 
@@ -151,7 +181,9 @@ light_client_research/
   mainnet_datasets/
     latest_50k_bins_250/          # 200 .bin files, ~23 GB total
       mainnet_889327-889576.bin
+      mainnet_889327-889576.block_sizes.json
       mainnet_889577-889826.bin
+      mainnet_889577-889826.block_sizes.json
       ...
     wallet_use_cases/             # 10 wallet scenario files
       wallet_use_case_simple_user.json
@@ -161,7 +193,8 @@ light_client_research/
     extract_bitcoin_data.py       # Step 1: RPC extraction
     tx_dataset_bin_format.py      # Binary format library
     convert_tx_json_to_bin_chunks.py  # Step 2: JSON → bins
-    generate_wallet_use_cases.py  # Step 3: wallet scenarios
+    collect_bin_block_sizes.py    # Step 3: per-bin block size sidecars
+    generate_wallet_use_cases.py  # Step 4: wallet scenarios
     validate_data.py              # Dataset validation
     validate_tx_json_vs_bin.py    # JSON vs bin verification
 ```
