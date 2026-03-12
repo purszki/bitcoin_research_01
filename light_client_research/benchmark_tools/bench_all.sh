@@ -13,5 +13,5 @@ echo "=== Ground-Truth Validation (${MAX_BLOCKS} blocks) ==="
 "$SCRIPT_DIR/false_positive_check.sh" "$MAX_BLOCKS"
 
 echo ""
-echo "=== Wallet Benchmark GCS vs Fuse16 (${MAX_BLOCKS} blocks) ==="
+echo "=== Wallet Benchmark All Filters (${MAX_BLOCKS} blocks) ==="
 "$SCRIPT_DIR/wallet_benchmark.sh" "$MAX_BLOCKS"
