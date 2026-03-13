@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # wallet_benchmark.sh — Benchmark all filter types across all wallet use cases.
-# Filters: GCS, Fuse12, Fuse16, Fuse20, Fuse32, F16+20, F12+18
+# Uses unified ResearchAllFiltersAllWallets for single-pass I/O efficiency.
+# Filters: GCS, F16, F16+20, F12+12, F12+16, F12+18
 #
 # Usage: ./wallet_benchmark.sh <max_blocks>
 #   e.g.: ./wallet_benchmark.sh 50000
@@ -34,7 +35,22 @@ fi
 
 mkdir -p "$RESULTS_DIR"
 
-# Extract ns/op from nanobench output line and convert to ms.
+TIMESTAMP=$(date '+%Y-%m-%d %H:%M')
+RAW_OUTPUT=$(mktemp)
+trap 'rm -f "$RAW_OUTPUT"' EXIT
+
+echo "Running unified benchmark for $MAX_BLOCKS blocks (single I/O pass)..."
+
+BIN_SCAN_MAX_BLOCKS="$MAX_BLOCKS" \
+BIN_WALLET_DIR="$WALLET_DIR" \
+    "$BENCH_BIN" \
+    -filter="ResearchAllFiltersAllWallets" -min-time=1000 \
+    2>&1 | tee "$RAW_OUTPUT"
+
+echo ""
+echo "Benchmark complete. Parsing results..."
+
+# Extract timing (ns) from nanobench markdown table, convert to ms.
 parse_ns_to_ms() {
     local file="$1" bench_name="$2"
     local ns
@@ -46,262 +62,188 @@ parse_ns_to_ms() {
     fi
 }
 
-# Parse matches from a benchmark output line matching a tag pattern.
-parse_matches() {
-    local file="$1" tag="$2"
-    grep "$tag" "$file" | tail -1 | grep -oP 'matches=\K[0-9]+' || echo ""
+# Extract a key=value field from an [AllFilters] line matching wallet + filter.
+parse_field() {
+    local file="$1" wallet="$2" filter="$3" field="$4"
+    grep "\[AllFilters\] wallet=${wallet} " "$file" | grep " filter=${filter} " | tail -1 \
+        | grep -oP "${field}=\K[\d.e+-]+" | head -1 || echo ""
 }
 
-# Parse first MB value from a benchmark output line matching a tag pattern.
-parse_mb() {
-    local file="$1" tag="$2"
-    grep "$tag" "$file" | tail -1 | grep -oP '\([\d.]+ MB\)' | head -1 | grep -oP '[\d.]+' || echo ""
-}
-
-# Parse fp_block_download MB from benchmark output.
-parse_fp_block_mb() {
-    local file="$1" tag="$2"
-    grep "$tag" "$file" | tail -1 | grep -oP 'fp_block_download=\K[\d.]+' || echo "0"
-}
-
-# Parse hierarchical-style single-line output field.
-parse_hier_field() {
-    local file="$1" tag="$2" field="$3"
-    grep "$tag" "$file" | tail -1 | grep -oP "${field}=\K[\d.]+" | head -1 || echo ""
-}
-
-# Compute speedup: $1 / $2 rounded to integer.
 calc_speedup() {
-    python3 -c "print(f'{float(\"$1\") / float(\"$2\"):.0f}')" 2>/dev/null || echo "?"
+    python3 -c "
+a, b = float('$1'), float('$2')
+print(f'{a/b:.0f}' if b > 0 else '?')
+" 2>/dev/null || echo "?"
 }
 
-TIMESTAMP=$(date '+%Y-%m-%d %H:%M')
-RAW_OUTPUT=$(mktemp)
-trap 'rm -f "$RAW_OUTPUT"' EXIT
+# Discover wallets from [AllFilters] output (already sorted by script count in C++).
+mapfile -t WALLETS < <(grep '\[AllFilters\].*filter=GCS ' "$RAW_OUTPUT" | grep -oP 'wallet=\K\S+')
 
-echo "================================================================================"
-echo "All Filters Benchmark — All Wallet Use Cases — ${MAX_BLOCKS} blocks"
-echo "Date: $TIMESTAMP"
-echo "================================================================================"
-echo ""
-
-# Collect per-wallet results
-# Row format: wallet|scripts|gcs_ms|f12_ms|f16_ms|f20_ms|f32_ms|f16_20_ms|f12_18_ms|
-#   gcs_mb|f12_mb|f16_mb|f20_mb|f32_mb|f16_20_mb|f12_18_mb|
-#   gcs_m|f12_m|f16_m|f20_m|f32_m|f16_20_m|f12_18_m|gt|
-#   gcs_fp|f12_fp|f16_fp|f20_fp|f32_fp|f16_20_fp|f12_18_fp|
-#   gcs_fpmb|f12_fpmb|f16_fpmb|f20_fpmb|f32_fpmb|f16_20_fpmb|f12_18_fpmb
 declare -a ROWS=()
 
-run_flat_bench() {
-    local bench_name="$1" tag="$2" label="$3" wallet_file="$4"
-    BIN_SCAN_MAX_BLOCKS="$MAX_BLOCKS" \
-    BIN_WALLET_SCENARIO="$wallet_file" \
-        "$BENCH_BIN" \
-        -filter="$bench_name" -min-time=1000 \
-        > "$RAW_OUTPUT" 2>&1
+for wallet in "${WALLETS[@]}"; do
+    scripts=$(parse_field "$RAW_OUTPUT" "$wallet" "GCS" "scripts")
+    gt=$(parse_field "$RAW_OUTPUT" "$wallet" "GCS" "ground_truth")
 
-    local ms mb matches fp fp_mb
-    ms=$(parse_ns_to_ms "$RAW_OUTPUT" "$bench_name")
-    mb=$(parse_mb "$RAW_OUTPUT" "$tag")
-    matches=$(parse_matches "$RAW_OUTPUT" "$tag")
-    fp=$(( ${matches:-0} - ground_truth )); [ "$fp" -lt 0 ] && fp=0
-    fp_mb=$(parse_fp_block_mb "$RAW_OUTPUT" "$tag")
-    echo "  ${label}: ${ms:-?} ms, ${mb:-?} MB, matches=${matches:-?}, FP=$fp, FP_blocks=${fp_mb} MB"
-    # Return values via global vars
-    _ms="$ms"; _mb="$mb"; _matches="$matches"; _fp="$fp"; _fp_mb="$fp_mb"
-}
+    gcs_ms=$(parse_ns_to_ms "$RAW_OUTPUT" "GCS/$wallet")
+    gcs_mb=$(parse_field "$RAW_OUTPUT" "$wallet" "GCS" "filter_mb")
+    gcs_m=$(parse_field "$RAW_OUTPUT" "$wallet" "GCS" "matches")
+    gcs_dlmb=$(parse_field "$RAW_OUTPUT" "$wallet" "GCS" "block_download")
+    gcs_fp=$(( ${gcs_m:-0} - ${gt:-0} )); [ "$gcs_fp" -lt 0 ] && gcs_fp=0
 
-run_hier_bench() {
-    local bench_name="$1" tag="$2" label="$3" wallet_file="$4"
-    BIN_SCAN_MAX_BLOCKS="$MAX_BLOCKS" \
-    BIN_WALLET_SCENARIO="$wallet_file" \
-        "$BENCH_BIN" \
-        -filter="$bench_name" -min-time=1000 \
-        > "$RAW_OUTPUT" 2>&1
+    f16_ms=$(parse_ns_to_ms "$RAW_OUTPUT" "F16/$wallet")
+    f16_mb=$(parse_field "$RAW_OUTPUT" "$wallet" "F16" "filter_mb")
+    f16_m=$(parse_field "$RAW_OUTPUT" "$wallet" "F16" "matches")
+    f16_dlmb=$(parse_field "$RAW_OUTPUT" "$wallet" "F16" "block_download")
+    f16_fp=$(( ${f16_m:-0} - ${gt:-0} )); [ "$f16_fp" -lt 0 ] && f16_fp=0
 
-    local ms total_mb matches eliminated fp fp_mb
-    ms=$(parse_ns_to_ms "$RAW_OUTPUT" "$bench_name")
-    total_mb=$(parse_hier_field "$RAW_OUTPUT" "$tag" "total_filter")
-    matches=$(parse_hier_field "$RAW_OUTPUT" "$tag" "matches")
-    eliminated=$(parse_hier_field "$RAW_OUTPUT" "$tag" "eliminated")
-    fp_mb=$(parse_hier_field "$RAW_OUTPUT" "$tag" "fp_block_download")
-    [ -z "$fp_mb" ] && fp_mb="0"
-    fp=$(( ${matches:-0} - ground_truth )); [ "$fp" -lt 0 ] && fp=0
-    echo "  ${label}: ${ms:-?} ms, ${total_mb:-?} MB, matches=${matches:-?}, FP=$fp, eliminated=${eliminated:-0}, FP_blocks=${fp_mb} MB"
-    _ms="$ms"; _mb="$total_mb"; _matches="$matches"; _fp="$fp"; _fp_mb="$fp_mb"
-}
+    f16_20_ms=$(parse_ns_to_ms "$RAW_OUTPUT" "F16+20/$wallet")
+    f16_20_mb=$(parse_field "$RAW_OUTPUT" "$wallet" "F16+20" "total_filter")
+    f16_20_m=$(parse_field "$RAW_OUTPUT" "$wallet" "F16+20" "matches")
+    f16_20_dlmb=$(parse_field "$RAW_OUTPUT" "$wallet" "F16+20" "block_download")
+    f16_20_fp=$(( ${f16_20_m:-0} - ${gt:-0} )); [ "$f16_20_fp" -lt 0 ] && f16_20_fp=0
 
-for wallet_file in "$WALLET_DIR"/wallet_use_case_*.json; do
-    wallet_name=$(basename "$wallet_file" .json | sed 's/wallet_use_case_//')
-    scripts=$(python3 -c "import json; d=json.load(open('$wallet_file')); print(d['wallet_characteristics']['address_total'])")
-    ground_truth=$(python3 -c "
-import json; d=json.load(open('$wallet_file'))
-n = $MAX_BLOCKS
-print(sum(1 for b in d['ground_truth']['matched_blocks'] if b['block_index'] < n))
-")
+    f12_12_ms=$(parse_ns_to_ms "$RAW_OUTPUT" "F12+12/$wallet")
+    f12_12_mb=$(parse_field "$RAW_OUTPUT" "$wallet" "F12+12" "total_filter")
+    f12_12_m=$(parse_field "$RAW_OUTPUT" "$wallet" "F12+12" "matches")
+    f12_12_dlmb=$(parse_field "$RAW_OUTPUT" "$wallet" "F12+12" "block_download")
+    f12_12_fp=$(( ${f12_12_m:-0} - ${gt:-0} )); [ "$f12_12_fp" -lt 0 ] && f12_12_fp=0
 
-    echo "--- $wallet_name ($scripts scripts) ---"
+    f12_16_ms=$(parse_ns_to_ms "$RAW_OUTPUT" "F12+16/$wallet")
+    f12_16_mb=$(parse_field "$RAW_OUTPUT" "$wallet" "F12+16" "total_filter")
+    f12_16_m=$(parse_field "$RAW_OUTPUT" "$wallet" "F12+16" "matches")
+    f12_16_dlmb=$(parse_field "$RAW_OUTPUT" "$wallet" "F12+16" "block_download")
+    f12_16_fp=$(( ${f12_16_m:-0} - ${gt:-0} )); [ "$f12_16_fp" -lt 0 ] && f12_16_fp=0
 
-    # GCS
-    run_flat_bench "ResearchBasicClientSideQuery" '\[BasicClientQuery\]' "GCS   " "$wallet_file"
-    gcs_ms="$_ms"; gcs_mb="$_mb"; gcs_matches="$_matches"; gcs_fp="$_fp"; gcs_fpmb="$_fp_mb"
+    f12_18_ms=$(parse_ns_to_ms "$RAW_OUTPUT" "F12+18/$wallet")
+    f12_18_mb=$(parse_field "$RAW_OUTPUT" "$wallet" "F12+18" "total_filter")
+    f12_18_m=$(parse_field "$RAW_OUTPUT" "$wallet" "F12+18" "matches")
+    f12_18_dlmb=$(parse_field "$RAW_OUTPUT" "$wallet" "F12+18" "block_download")
+    f12_18_fp=$(( ${f12_18_m:-0} - ${gt:-0} )); [ "$f12_18_fp" -lt 0 ] && f12_18_fp=0
 
-    # Fuse12
-    run_flat_bench "ResearchFuse12ClientSideQuery" '\[Fuse12ClientQuery\]' "F12   " "$wallet_file"
-    f12_ms="$_ms"; f12_mb="$_mb"; f12_matches="$_matches"; f12_fp="$_fp"; f12_fpmb="$_fp_mb"
-
-    # Fuse16
-    run_flat_bench "ResearchFuse16ClientSideQuery" '\[Fuse16ClientQuery\]' "F16   " "$wallet_file"
-    f16_ms="$_ms"; f16_mb="$_mb"; f16_matches="$_matches"; f16_fp="$_fp"; f16_fpmb="$_fp_mb"
-
-    # Fuse20
-    run_flat_bench "ResearchFuse20ClientSideQuery" '\[Fuse20ClientQuery\]' "F20   " "$wallet_file"
-    f20_ms="$_ms"; f20_mb="$_mb"; f20_matches="$_matches"; f20_fp="$_fp"; f20_fpmb="$_fp_mb"
-
-    # Fuse32
-    run_flat_bench "ResearchFuse32ClientSideQuery" '\[Fuse32ClientQuery\]' "F32   " "$wallet_file"
-    f32_ms="$_ms"; f32_mb="$_mb"; f32_matches="$_matches"; f32_fp="$_fp"; f32_fpmb="$_fp_mb"
-
-    # Fuse16+20
-    run_hier_bench "ResearchFuse16_20" '\[Fuse16+20\]' "F16+20" "$wallet_file"
-    f16_20_ms="$_ms"; f16_20_mb="$_mb"; f16_20_matches="$_matches"; f16_20_fp="$_fp"; f16_20_fpmb="$_fp_mb"
-
-    # Fuse12+18
-    run_hier_bench "ResearchFuse12_18" '\[Fuse12+18\]' "F12+18" "$wallet_file"
-    f12_18_ms="$_ms"; f12_18_mb="$_mb"; f12_18_matches="$_matches"; f12_18_fp="$_fp"; f12_18_fpmb="$_fp_mb"
-
-    # Speedups
     if [ -n "$gcs_ms" ]; then
-        f12_su=$(calc_speedup "$gcs_ms" "${f12_ms:-1}")
         f16_su=$(calc_speedup "$gcs_ms" "${f16_ms:-1}")
-        f20_su=$(calc_speedup "$gcs_ms" "${f20_ms:-1}")
-        f32_su=$(calc_speedup "$gcs_ms" "${f32_ms:-1}")
         f16_20_su=$(calc_speedup "$gcs_ms" "${f16_20_ms:-1}")
+        f12_12_su=$(calc_speedup "$gcs_ms" "${f12_12_ms:-1}")
+        f12_16_su=$(calc_speedup "$gcs_ms" "${f12_16_ms:-1}")
         f12_18_su=$(calc_speedup "$gcs_ms" "${f12_18_ms:-1}")
     else
-        f12_su="?"; f16_su="?"; f20_su="?"; f32_su="?"; f16_20_su="?"; f12_18_su="?"
+        f16_su="?"; f16_20_su="?"; f12_12_su="?"; f12_16_su="?"; f12_18_su="?"
     fi
-    echo "  Speedup vs GCS: F12=${f12_su}x, F16=${f16_su}x, F20=${f20_su}x, F32=${f32_su}x, F16+20=${f16_20_su}x, F12+18=${f12_18_su}x"
-    echo ""
 
-    ROWS+=("$wallet_name|$scripts|${gcs_ms:-0}|${f12_ms:-0}|${f16_ms:-0}|${f20_ms:-0}|${f32_ms:-0}|${f16_20_ms:-0}|${f12_18_ms:-0}|${gcs_mb:-0}|${f12_mb:-0}|${f16_mb:-0}|${f20_mb:-0}|${f32_mb:-0}|${f16_20_mb:-0}|${f12_18_mb:-0}|${gcs_matches:-0}|${f12_matches:-0}|${f16_matches:-0}|${f20_matches:-0}|${f32_matches:-0}|${f16_20_matches:-0}|${f12_18_matches:-0}|$ground_truth|$gcs_fp|$f12_fp|$f16_fp|$f20_fp|$f32_fp|$f16_20_fp|$f12_18_fp|$f12_su|$f16_su|$f20_su|$f32_su|$f16_20_su|$f12_18_su|${gcs_fpmb:-0}|${f12_fpmb:-0}|${f16_fpmb:-0}|${f20_fpmb:-0}|${f32_fpmb:-0}|${f16_20_fpmb:-0}|${f12_18_fpmb:-0}")
+    ROWS+=("$wallet|$scripts|${gcs_ms:-0}|${f16_ms:-0}|${f16_20_ms:-0}|${f12_12_ms:-0}|${f12_16_ms:-0}|${f12_18_ms:-0}|${gcs_mb:-0}|${f16_mb:-0}|${f16_20_mb:-0}|${f12_12_mb:-0}|${f12_16_mb:-0}|${f12_18_mb:-0}|${gcs_m:-0}|${f16_m:-0}|${f16_20_m:-0}|${f12_12_m:-0}|${f12_16_m:-0}|${f12_18_m:-0}|${gt:-0}|$gcs_fp|$f16_fp|$f16_20_fp|$f12_12_fp|$f12_16_fp|$f12_18_fp|$f16_su|$f16_20_su|$f12_12_su|$f12_16_su|$f12_18_su|${gcs_dlmb:-0}|${f16_dlmb:-0}|${f16_20_dlmb:-0}|${f12_12_dlmb:-0}|${f12_16_dlmb:-0}|${f12_18_dlmb:-0}")
 done
 
-# Sort rows by script count
-IFS=$'\n' SORTED=($(for row in "${ROWS[@]}"; do echo "$row"; done | sort -t'|' -k2 -n))
-unset IFS
+# Rows are already sorted by script count from C++.
+SORTED=("${ROWS[@]}")
 
-# Parse a row into named variables.
 parse_row() {
-    IFS='|' read -r wallet scripts gcs_ms f12_ms f16_ms f20_ms f32_ms f16_20_ms f12_18_ms \
-        gcs_mb f12_mb f16_mb f20_mb f32_mb f16_20_mb f12_18_mb \
-        gcs_m f12_m f16_m f20_m f32_m f16_20_m f12_18_m gt \
-        gcs_fp f12_fp f16_fp f20_fp f32_fp f16_20_fp f12_18_fp \
-        f12_su f16_su f20_su f32_su f16_20_su f12_18_su \
-        gcs_fpmb f12_fpmb f16_fpmb f20_fpmb f32_fpmb f16_20_fpmb f12_18_fpmb <<< "$1"
+    IFS='|' read -r wallet scripts gcs_ms f16_ms f16_20_ms f12_12_ms f12_16_ms f12_18_ms \
+        gcs_mb f16_mb f16_20_mb f12_12_mb f12_16_mb f12_18_mb \
+        gcs_m f16_m f16_20_m f12_12_m f12_16_m f12_18_m gt \
+        gcs_fp f16_fp f16_20_fp f12_12_fp f12_16_fp f12_18_fp \
+        f16_su f16_20_su f12_12_su f12_16_su f12_18_su \
+        gcs_dlmb f16_dlmb f16_20_dlmb f12_12_dlmb f12_16_dlmb f12_18_dlmb <<< "$1"
 }
 
-HDR_FMT="%-25s %7s │ %9s %9s %9s %9s %9s %9s %9s\n"
-ROW_FMT="%-25s %7s │ %9s %9s %9s %9s %9s %9s %9s\n"
-SEP="────────────────────────────────────┼───────────────────────────────────────────────────────────────────────"
+HDR_FMT="%-25s %7s │ %9s %9s %9s %9s %9s %9s\n"
+ROW_FMT="%-25s %7s │ %9s %9s %9s %9s %9s %9s\n"
+SEP="────────────────────────────────────┼─────────────────────────────────────────────────────────────"
 
-# Write summary tables
 {
-    echo "================================================================================"
+    echo "========================================================================================"
     echo "All Filters Benchmark — All Wallet Use Cases — ${MAX_BLOCKS} blocks"
     echo "Date: $TIMESTAMP"
-    echo "================================================================================"
+    echo "========================================================================================"
     echo ""
 
-    # Per-wallet details
     for row in "${ROWS[@]}"; do
         parse_row "$row"
         echo "--- $wallet ($scripts scripts) ---"
-        echo "  GCS:    $gcs_ms ms, $gcs_mb MB, matches=$gcs_m, FP=$gcs_fp, FP_blocks=${gcs_fpmb} MB"
-        echo "  F12:    $f12_ms ms, $f12_mb MB, matches=$f12_m, FP=$f12_fp, FP_blocks=${f12_fpmb} MB, speedup=${f12_su}x"
-        echo "  F16:    $f16_ms ms, $f16_mb MB, matches=$f16_m, FP=$f16_fp, FP_blocks=${f16_fpmb} MB, speedup=${f16_su}x"
-        echo "  F20:    $f20_ms ms, $f20_mb MB, matches=$f20_m, FP=$f20_fp, FP_blocks=${f20_fpmb} MB, speedup=${f20_su}x"
-        echo "  F32:    $f32_ms ms, $f32_mb MB, matches=$f32_m, FP=$f32_fp, FP_blocks=${f32_fpmb} MB, speedup=${f32_su}x"
-        echo "  F16+20: $f16_20_ms ms, $f16_20_mb MB, matches=$f16_20_m, FP=$f16_20_fp, FP_blocks=${f16_20_fpmb} MB, speedup=${f16_20_su}x"
-        echo "  F12+18: $f12_18_ms ms, $f12_18_mb MB, matches=$f12_18_m, FP=$f12_18_fp, FP_blocks=${f12_18_fpmb} MB, speedup=${f12_18_su}x"
+        echo "  GCS:     $gcs_ms ms, $gcs_mb MB, matches=$gcs_m, FP=$gcs_fp, block_dl=${gcs_dlmb} MB"
+        echo "  F16:     $f16_ms ms, $f16_mb MB, matches=$f16_m, FP=$f16_fp, block_dl=${f16_dlmb} MB, speedup=${f16_su}x"
+        echo "  F16+20:  $f16_20_ms ms, $f16_20_mb MB, matches=$f16_20_m, FP=$f16_20_fp, block_dl=${f16_20_dlmb} MB, speedup=${f16_20_su}x"
+        echo "  F12+12:  $f12_12_ms ms, $f12_12_mb MB, matches=$f12_12_m, FP=$f12_12_fp, block_dl=${f12_12_dlmb} MB, speedup=${f12_12_su}x"
+        echo "  F12+16:  $f12_16_ms ms, $f12_16_mb MB, matches=$f12_16_m, FP=$f12_16_fp, block_dl=${f12_16_dlmb} MB, speedup=${f12_16_su}x"
+        echo "  F12+18:  $f12_18_ms ms, $f12_18_mb MB, matches=$f12_18_m, FP=$f12_18_fp, block_dl=${f12_18_dlmb} MB, speedup=${f12_18_su}x"
         echo ""
     done
 
     echo ""
-    echo "================================================================================"
+    echo "========================================================================================"
     echo "SUMMARY TABLE — CPU (ms)"
-    echo "================================================================================"
+    echo "========================================================================================"
     echo ""
-    printf "$HDR_FMT" "Wallet" "Scripts" "GCS" "F12" "F16" "F20" "F32" "F16+20" "F12+18"
+    printf "$HDR_FMT" "Wallet" "Scripts" "GCS" "F16" "F16+20" "F12+12" "F12+16" "F12+18"
     printf "%s\n" "$SEP"
     for row in "${SORTED[@]}"; do
         parse_row "$row"
-        printf "$ROW_FMT" "$wallet" "$scripts" "$gcs_ms" "$f12_ms" "$f16_ms" "$f20_ms" "$f32_ms" "$f16_20_ms" "$f12_18_ms"
+        printf "$ROW_FMT" "$wallet" "$scripts" "$gcs_ms" "$f16_ms" "$f16_20_ms" "$f12_12_ms" "$f12_16_ms" "$f12_18_ms"
     done
 
     echo ""
-    echo "================================================================================"
+    echo "========================================================================================"
     echo "SUMMARY TABLE — Filter Bandwidth (MB)"
-    echo "================================================================================"
+    echo "========================================================================================"
     echo ""
-    printf "$HDR_FMT" "Wallet" "Scripts" "GCS" "F12" "F16" "F20" "F32" "F16+20" "F12+18"
+    printf "$HDR_FMT" "Wallet" "Scripts" "GCS" "F16" "F16+20" "F12+12" "F12+16" "F12+18"
     printf "%s\n" "$SEP"
     for row in "${SORTED[@]}"; do
         parse_row "$row"
-        printf "$ROW_FMT" "$wallet" "$scripts" "$gcs_mb" "$f12_mb" "$f16_mb" "$f20_mb" "$f32_mb" "$f16_20_mb" "$f12_18_mb"
+        printf "$ROW_FMT" "$wallet" "$scripts" "$gcs_mb" "$f16_mb" "$f16_20_mb" "$f12_12_mb" "$f12_16_mb" "$f12_18_mb"
     done
 
     echo ""
-    echo "================================================================================"
+    echo "========================================================================================"
     echo "SUMMARY TABLE — False Positives & Speedup vs GCS"
-    echo "================================================================================"
+    echo "========================================================================================"
     echo ""
-    printf "%-25s %7s │ %5s %5s %5s %5s %5s %5s %5s │ %5s %5s %5s %5s %6s %6s\n" \
-        "Wallet" "Scripts" "GCS" "F12" "F16" "F20" "F32" "F1620" "F1218" "F12x" "F16x" "F20x" "F32x" "F1620x" "F1218x"
-    printf "%s\n" "────────────────────────────────────┼───────────────────────────────────────────┼──────────────────────────────────────"
+    printf "%-25s %7s │ %5s %5s %5s %5s %5s %5s │ %5s %6s %6s %6s %6s\n" \
+        "Wallet" "Scripts" "GCS" "F16" "F1620" "F1212" "F1216" "F1218" "F16x" "F1620x" "F1212x" "F1216x" "F1218x"
+    printf "%s\n" "────────────────────────────────────┼──────────────────────────────────────┼─────────────────────────────────────"
     for row in "${SORTED[@]}"; do
         parse_row "$row"
-        printf "%-25s %7s │ %5s %5s %5s %5s %5s %5s %5s │ %4sx %4sx %4sx %4sx %5sx %5sx\n" \
-            "$wallet" "$scripts" "$gcs_fp" "$f12_fp" "$f16_fp" "$f20_fp" "$f32_fp" "$f16_20_fp" "$f12_18_fp" \
-            "$f12_su" "$f16_su" "$f20_su" "$f32_su" "$f16_20_su" "$f12_18_su"
+        printf "%-25s %7s │ %5s %5s %5s %5s %5s %5s │ %4sx %5sx %5sx %5sx %5sx\n" \
+            "$wallet" "$scripts" "$gcs_fp" "$f16_fp" "$f16_20_fp" "$f12_12_fp" "$f12_16_fp" "$f12_18_fp" \
+            "$f16_su" "$f16_20_su" "$f12_12_su" "$f12_16_su" "$f12_18_su"
     done
 
     echo ""
-    echo "================================================================================"
-    echo "SUMMARY TABLE — FP Block Download Waste (MB)"
-    echo "================================================================================"
+    echo "========================================================================================"
+    echo "SUMMARY TABLE — Block Download TP+FP (MB)"
+    echo "========================================================================================"
     echo ""
-    printf "$HDR_FMT" "Wallet" "Scripts" "GCS" "F12" "F16" "F20" "F32" "F16+20" "F12+18"
+    printf "$HDR_FMT" "Wallet" "Scripts" "GCS" "F16" "F16+20" "F12+12" "F12+16" "F12+18"
     printf "%s\n" "$SEP"
     for row in "${SORTED[@]}"; do
         parse_row "$row"
-        printf "$ROW_FMT" "$wallet" "$scripts" "$gcs_fpmb" "$f12_fpmb" "$f16_fpmb" "$f20_fpmb" "$f32_fpmb" "$f16_20_fpmb" "$f12_18_fpmb"
+        printf "$ROW_FMT" "$wallet" "$scripts" "$gcs_dlmb" "$f16_dlmb" "$f16_20_dlmb" "$f12_12_dlmb" "$f12_16_dlmb" "$f12_18_dlmb"
     done
 
     echo ""
-    echo "================================================================================"
-    echo "SUMMARY TABLE — Total Bandwidth: Filters + FP Block Downloads (MB)"
-    echo "================================================================================"
+    echo "========================================================================================"
+    echo "SUMMARY TABLE — Total Bandwidth: Filters + Block Downloads (MB)"
+    echo "========================================================================================"
     echo ""
-    printf "$HDR_FMT" "Wallet" "Scripts" "GCS" "F12" "F16" "F20" "F32" "F16+20" "F12+18"
+    printf "$HDR_FMT" "Wallet" "Scripts" "GCS" "F16" "F16+20" "F12+12" "F12+16" "F12+18"
     printf "%s\n" "$SEP"
     for row in "${SORTED[@]}"; do
         parse_row "$row"
-        gcs_total=$(python3 -c "print(f'{float(\"$gcs_mb\") + float(\"$gcs_fpmb\"):.3f}')")
-        f12_total=$(python3 -c "print(f'{float(\"$f12_mb\") + float(\"$f12_fpmb\"):.3f}')")
-        f16_total=$(python3 -c "print(f'{float(\"$f16_mb\") + float(\"$f16_fpmb\"):.3f}')")
-        f20_total=$(python3 -c "print(f'{float(\"$f20_mb\") + float(\"$f20_fpmb\"):.3f}')")
-        f32_total=$(python3 -c "print(f'{float(\"$f32_mb\") + float(\"$f32_fpmb\"):.3f}')")
-        f16_20_total=$(python3 -c "print(f'{float(\"$f16_20_mb\") + float(\"$f16_20_fpmb\"):.3f}')")
-        f12_18_total=$(python3 -c "print(f'{float(\"$f12_18_mb\") + float(\"$f12_18_fpmb\"):.3f}')")
-        printf "$ROW_FMT" "$wallet" "$scripts" "$gcs_total" "$f12_total" "$f16_total" "$f20_total" "$f32_total" "$f16_20_total" "$f12_18_total"
+        gcs_total=$(python3 -c "print(f'{float(\"$gcs_mb\") + float(\"$gcs_dlmb\"):.3f}')")
+        f16_total=$(python3 -c "print(f'{float(\"$f16_mb\") + float(\"$f16_dlmb\"):.3f}')")
+        f16_20_total=$(python3 -c "print(f'{float(\"$f16_20_mb\") + float(\"$f16_20_dlmb\"):.3f}')")
+        f12_12_total=$(python3 -c "print(f'{float(\"$f12_12_mb\") + float(\"$f12_12_dlmb\"):.3f}')")
+        f12_16_total=$(python3 -c "print(f'{float(\"$f12_16_mb\") + float(\"$f12_16_dlmb\"):.3f}')")
+        f12_18_total=$(python3 -c "print(f'{float(\"$f12_18_mb\") + float(\"$f12_18_dlmb\"):.3f}')")
+        printf "$ROW_FMT" "$wallet" "$scripts" "$gcs_total" "$f16_total" "$f16_20_total" "$f12_12_total" "$f12_16_total" "$f12_18_total"
     done
 
     echo ""
-    echo "================================================================================"
+    echo "========================================================================================"
     echo "FP = filter_matches - ground_truth_hits (actual false positives)"
-    echo "================================================================================"
+    echo "Block download = all matched blocks (TP + FP)"
+    echo "Total bandwidth = filters + inner filters on-demand + block downloads"
+    echo "========================================================================================"
 } | tee "$RESULTS_FILE"
 
 echo ""

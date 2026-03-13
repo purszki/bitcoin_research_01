@@ -629,14 +629,14 @@ private:
   }
 
   void deserialize_fingerprints(const char *buf) {
-    deserialize_fingerprints_impl(
+    deserialize_fingerprints_wide(
         buf,
         std::integral_constant<bool,
-            FingerprintBits == 20 &&
             std::is_same<ValueType, uint32_t>::value>());
   }
 
-  void deserialize_fingerprints_impl(const char *buf, std::false_type) {
+  // Generic fallback for DirectStorage (uint8_t, uint16_t, uint32_t).
+  void deserialize_fingerprints_wide(const char *buf, std::false_type) {
     for (uint32_t i = 0; i < ArrayLength; i++) {
       uint64_t bit_offset = (uint64_t)i * FingerprintBits;
       uint32_t byte_idx = (uint32_t)(bit_offset >> 3);
@@ -648,29 +648,27 @@ private:
     }
   }
 
-  void deserialize_fingerprints_impl(const char *buf, std::true_type) {
-    const uint8_t *src = (const uint8_t *)(const void *)buf;
-    uint32_t *dst = (uint32_t *)storage_.raw_ptr();
-    uint32_t i = 0;
+  // Fast path for WideStorage<Bits>: streaming 64-bit accumulator.
+  // Works for any Bits in [1..32]. Processes values from a bit-packed
+  // stream using a sliding 64-bit window, avoiding per-element memcpy.
+  void deserialize_fingerprints_wide(const char *buf, std::true_type) {
+    const uint8_t *src = reinterpret_cast<const uint8_t *>(buf);
+    uint32_t *dst = static_cast<uint32_t *>(storage_.raw_ptr());
+    constexpr uint32_t mask = fp_mask();
 
-    // Fuse20 uses a fixed 2-values-per-5-bytes layout.
-    for (; i + 1 < ArrayLength; i += 2, src += 5) {
-      uint64_t packed =
-          (uint64_t)src[0] |
-          ((uint64_t)src[1] << 8U) |
-          ((uint64_t)src[2] << 16U) |
-          ((uint64_t)src[3] << 24U) |
-          ((uint64_t)src[4] << 32U);
-      dst[i] = (uint32_t)(packed & fp_mask());
-      dst[i + 1] = (uint32_t)((packed >> 20U) & fp_mask());
-    }
+    uint64_t acc = 0;
+    unsigned bits_in_acc = 0;
+    uint32_t src_pos = 0;
 
-    if (i < ArrayLength) {
-      uint32_t packed =
-          (uint32_t)src[0] |
-          ((uint32_t)src[1] << 8U) |
-          ((uint32_t)src[2] << 16U);
-      dst[i] = packed & fp_mask();
+    for (uint32_t i = 0; i < ArrayLength; i++) {
+      // Refill accumulator so it holds at least FingerprintBits.
+      while (bits_in_acc < FingerprintBits) {
+        acc |= (uint64_t)src[src_pos++] << bits_in_acc;
+        bits_in_acc += 8;
+      }
+      dst[i] = (uint32_t)(acc & mask);
+      acc >>= FingerprintBits;
+      bits_in_acc -= FingerprintBits;
     }
   }
 
