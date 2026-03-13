@@ -181,6 +181,7 @@ add_library(bitcoin_node STATIC EXCLUDE_FROM_ALL
   bip324.cpp
   blockencodings.cpp
   blockfilter.cpp
+  bench/light_client_research/fuse10filter.cpp
   bench/light_client_research/fuse8filter.cpp
   bench/light_client_research/fuse12filter.cpp
   bench/light_client_research/fuse16filter.cpp

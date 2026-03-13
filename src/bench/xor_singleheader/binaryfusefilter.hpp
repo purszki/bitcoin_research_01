@@ -831,6 +831,7 @@ private:
 // ============================================================================
 
 using BinaryFuseFilter8  = BinaryFuseFilter<DirectStorage<uint8_t>>;
+using BinaryFuseFilter10 = BinaryFuseFilter<WideStorage<10>>;
 using BinaryFuseFilter12 = BinaryFuseFilter<WideStorage<12>>;
 using BinaryFuseFilter16 = BinaryFuseFilter<DirectStorage<uint16_t>>;
 using BinaryFuseFilter18 = BinaryFuseFilter<WideStorage<18>>;
