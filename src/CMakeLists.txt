@@ -182,7 +182,9 @@ add_library(bitcoin_node STATIC EXCLUDE_FROM_ALL
   blockencodings.cpp
   blockfilter.cpp
   bench/light_client_research/fuse8filter.cpp
+  bench/light_client_research/fuse12filter.cpp
   bench/light_client_research/fuse16filter.cpp
+  bench/light_client_research/fuse18filter.cpp
   bench/light_client_research/fuse20filter.cpp
   bench/light_client_research/fuse32filter.cpp
   bench/light_client_research/xor8filter.cpp
