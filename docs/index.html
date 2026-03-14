@@ -368,7 +368,7 @@
   <main class="container">
     <header class="hero">
       <h1>Bitcoin Light Client Block Filter Research</h1>
-      <p class="meta-line">10th of March 2026 • Scope: 50,000 mainnet blocks • 10 wallet scenarios</p>
+      <p class="meta-line">14th of March 2026 • Scope: 50,000 mainnet blocks (heights 889,327–939,326) • 10 wallet scenarios</p>
       <p class="subtitle">
         Benchmarking BIP 158 against Binary Fuse filters, with reproducible datasets, wallet scenarios, and ground-truth validation on real mainnet data.
       </p>
@@ -738,7 +738,7 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
           </details>
 
           <h3>Profiling Results: Fuse8 and Xor8 (20k blocks)</h3>
-          <p>Comparing the speed and FP ratio of all the filters, the results match with the excepted values:</p>
+          <p>This early 20k-block run compared all four filter types to decide which ones to carry forward. The results led us to drop Fuse8 and Xor8; the 50k benchmarks below focus on the viable candidates.</p>
           <div class="table-wrap">
             <table>
               <thead>
@@ -859,14 +859,14 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
           <ol>
             <li><strong>ARM-based profiling on a real mobile device.</strong> The current results come from a desktop x86 benchmark environment. In practice, ARM processors have different memory hierarchy characteristics (cache sizes, memory latency, branch prediction) that may affect GCS and Fuse16 differently. Real hardware ARM profiling is a must.</li>
             <li><strong>Measuring actual network cost beyond byte totals.</strong> The current bandwidth tables already count actual serialized filter bytes, actual on-demand inner-filter bytes, and actual full-block bytes for every reported match in the 50,000-block dataset. What they still do not model is transport behavior: request batching, round-trip latency, peer behavior, retries, parallel downloads, and the CPU cost of parsing blocks after receipt. For hierarchical schemes there is an additional unresolved question: whether inner-filter retrieval can preserve wallet privacy without giving up the measured bandwidth gains.</li>
-            <li><strong>Skipped blocks with ≤ 2 elements.</strong> The xor_singleheader C library requires a minimum set size of 3 to construct a filter. Blocks with fewer unique script elements (typically empty blocks or blocks with only a coinbase) are skipped during benchmarking. In the 50,000-block dataset, 55 blocks fall into this category. Skipping them has almost no impact on match counts, false positive rates or profiling results. A production implementation would need to handle these blocks (e.g., by padding or using a trivial filter).</li>
+            <li><strong>Skipped blocks with fewer than 2 elements.</strong> Both the Fuse filter wrappers and the GCS benchmark path require at least 2 unique script elements to construct a filter. Blocks with 0 or 1 elements (typically empty blocks or blocks with only a coinbase) are skipped during benchmarking. In the 50,000-block dataset, 55 blocks fall into this category. Skipping them has almost no impact on match counts, false positive rates or profiling results. A production implementation would need to handle these blocks (e.g., by padding or using a trivial filter).</li>
             <li><strong>End-to-end wall-clock measurement.</strong> The current benchmarks measure filter query time in isolation. A production-relevant benchmark would measure the full wallet sync flow: receive filter bytes over a (simulated) network, deserialize, query, and on match download and process the block. This would capture the true user-facing latency including I/O and memory allocation overhead.</li>
           </ol>
         </section>
 
         <section id="path">
           <h2>Path to Protocol-Ready</h2>
-          <p>The proof-of-concept results are promising (8–73x speedup, comparable filter size, acceptable FP overhead). Below is what remains to go from research prototype to a deployable protocol change.</p>
+          <p>The proof-of-concept results are promising (10–78x speedup, comparable filter size, acceptable FP overhead). Below is what remains to go from research prototype to a deployable protocol change.</p>
           <h3>1. Evaluate Cuckoo filters</h3>
           <p>Cuckoo filters are another commonly suggested alternative to GCS. They offer O(1) lookup (similar to Fuse), support deletion (which Fuse does not), and have well-studied implementations. Before committing to Fuse as the proposal, we should build a proof-of-concept Cuckoo filter implementation using the same benchmark framework and compare. Our guess is that Fuse will be faster, but the evaluation must happen.</p>
 
@@ -992,7 +992,7 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
   </main>
 
   <footer>
-    Chainlabs BOSS 2026 Portfolio Project • Light Client Block Filters
+    ChainCode Labs BOSS 2026 Portfolio Project • Light Client Block Filters
     <p class="repo-link compact">Repository: <a href="https://github.com/purszki/bitcoin_research_01/">github.com/purszki/bitcoin_research_01</a></p>
   </footer>
 
