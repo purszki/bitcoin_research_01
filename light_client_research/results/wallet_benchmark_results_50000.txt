@@ -1,66 +1,206 @@
-================================================================================
-GCS vs Fuse16 — All Wallet Use Cases — 50000 blocks
-Date: 2026-03-09 23:52
-================================================================================
-
---- coinjoin_privacy_user (120 scripts) ---
-  GCS: 9891.9 ms, 972.147 MB, matches=8134, FP=3
-  Fuse16: 341.6 ms, 955.893 MB, matches=8210, FP=79, speedup=29x
-
---- cold_storage_vault (60 scripts) ---
-  GCS: 10562.3 ms, 972.147 MB, matches=762, FP=1
-  Fuse16: 245.6 ms, 955.893 MB, matches=813, FP=52, speedup=43x
-
---- custody_wallet (220 scripts) ---
-  GCS: 9933.7 ms, 972.147 MB, matches=11224, FP=8
-  Fuse16: 618.7 ms, 955.893 MB, matches=11360, FP=144, speedup=16x
-
---- exchange_hot_wallet (480 scripts) ---
-  GCS: 8758.1 ms, 972.147 MB, matches=27539, FP=9
-  Fuse16: 978.2 ms, 955.893 MB, matches=27666, FP=136, speedup=9x
-
---- legacy_migrator (90 scripts) ---
-  GCS: 8261.3 ms, 972.147 MB, matches=18180, FP=1
-  Fuse16: 267.7 ms, 955.893 MB, matches=18226, FP=47, speedup=31x
-
---- lightning_operator (180 scripts) ---
-  GCS: 10770.6 ms, 972.147 MB, matches=4055, FP=11
-  Fuse16: 570.6 ms, 955.893 MB, matches=4190, FP=146, speedup=19x
-
---- merchant_batch_settler (140 scripts) ---
-  GCS: 7992.2 ms, 972.147 MB, matches=21798, FP=3
-  Fuse16: 383.8 ms, 955.893 MB, matches=21863, FP=68, speedup=21x
+========================================================================================
+All Filters Benchmark — All Wallet Use Cases — 50000 blocks
+Date: 2026-03-13 15:15
+========================================================================================
 
 --- simple_user (24 scripts) ---
-  GCS: 10126.5 ms, 972.147 MB, matches=1037, FP=3
-  Fuse16: 138.3 ms, 955.893 MB, matches=1053, FP=19, speedup=73x
+  GCS:     10009.3 ms, 972.147 MB, matches=1037, FP=3, block_dl=1572.11 MB
+  F16:     128.1 ms, 955.893 MB, matches=1053, FP=19, block_dl=1599.91 MB, speedup=78x
+  F18:     1394.5 ms, 1075.21 MB, matches=1041, FP=7, block_dl=1581.38 MB, speedup=7x
+  F20:     1461.4 ms, 1194.53 MB, matches=1035, FP=1, block_dl=1569.76 MB, speedup=7x
+  F16+20:  171.2 ms, 989.3 MB, matches=1034, FP=0, block_dl=1568.95 MB, speedup=58x
+  F10+10:  1270.4 ms, 628.785 MB, matches=1035, FP=1, block_dl=1570.6 MB, speedup=8x
+  F12+12:  446.1 ms, 741.797 MB, matches=1035, FP=1, block_dl=1570.91 MB, speedup=22x
+  F12+16:  435.6 ms, 749.966 MB, matches=1034, FP=0, block_dl=1568.95 MB, speedup=23x
+  F12+18:  477.2 ms, 754.051 MB, matches=1034, FP=0, block_dl=1568.95 MB, speedup=21x
+
+--- cold_storage_vault (60 scripts) ---
+  GCS:     10475.1 ms, 972.147 MB, matches=762, FP=1, block_dl=1110.91 MB
+  F16:     237.7 ms, 955.893 MB, matches=813, FP=52, block_dl=1188.05 MB, speedup=44x
+  F18:     1506.5 ms, 1075.21 MB, matches=778, FP=17, block_dl=1137.45 MB, speedup=7x
+  F20:     1572.8 ms, 1194.53 MB, matches=766, FP=5, block_dl=1118.69 MB, speedup=7x
+  F16+20:  274.6 ms, 979.647 MB, matches=761, FP=0, block_dl=1110.47 MB, speedup=38x
+  F10+10:  1416.6 ms, 642.782 MB, matches=763, FP=2, block_dl=1113.67 MB, speedup=7x
+  F12+12:  560.9 ms, 740.866 MB, matches=761, FP=0, block_dl=1110.47 MB, speedup=19x
+  F12+16:  549.9 ms, 748.723 MB, matches=761, FP=0, block_dl=1110.47 MB, speedup=19x
+  F12+18:  593.1 ms, 752.652 MB, matches=761, FP=0, block_dl=1110.47 MB, speedup=18x
+
+--- legacy_migrator (90 scripts) ---
+  GCS:     8211.6 ms, 972.147 MB, matches=18180, FP=1, block_dl=26973.2 MB
+  F16:     229.0 ms, 955.893 MB, matches=18226, FP=47, block_dl=27047.2 MB, speedup=36x
+  F18:     1498.7 ms, 1075.21 MB, matches=18190, FP=11, block_dl=26990.6 MB, speedup=5x
+  F20:     1565.6 ms, 1194.53 MB, matches=18180, FP=1, block_dl=26974.6 MB, speedup=5x
+  F16+20:  929.1 ms, 1485.2 MB, matches=18179, FP=0, block_dl=26973 MB, speedup=9x
+  F10+10:  1945.7 ms, 888.521 MB, matches=18181, FP=2, block_dl=26976.3 MB, speedup=4x
+  F12+12:  778.5 ms, 1042.7 MB, matches=18179, FP=0, block_dl=26973 MB, speedup=11x
+  F12+16:  639.4 ms, 1151.01 MB, matches=18179, FP=0, block_dl=26973 MB, speedup=13x
+  F12+18:  1219.2 ms, 1205.17 MB, matches=18179, FP=0, block_dl=26973 MB, speedup=7x
 
 --- taproot_power_user (96 scripts) ---
-  GCS: 9996.0 ms, 972.147 MB, matches=7128, FP=4
-  Fuse16: 321.6 ms, 955.893 MB, matches=7192, FP=68, speedup=31x
+  GCS:     9923.0 ms, 972.147 MB, matches=7128, FP=4, block_dl=10589.5 MB
+  F16:     311.5 ms, 955.893 MB, matches=7192, FP=68, block_dl=10687.6 MB, speedup=32x
+  F18:     1578.7 ms, 1075.21 MB, matches=7141, FP=17, block_dl=10611.5 MB, speedup=6x
+  F20:     1643.7 ms, 1194.53 MB, matches=7129, FP=5, block_dl=10592.6 MB, speedup=6x
+  F16+20:  580.8 ms, 1152.96 MB, matches=7124, FP=0, block_dl=10584.6 MB, speedup=17x
+  F10+10:  1703.1 ms, 741.304 MB, matches=7128, FP=4, block_dl=10589 MB, speedup=6x
+  F12+12:  716.9 ms, 848.851 MB, matches=7124, FP=0, block_dl=10584.6 MB, speedup=14x
+  F12+16:  658.6 ms, 892.645 MB, matches=7124, FP=0, block_dl=10584.6 MB, speedup=15x
+  F12+18:  892.5 ms, 914.542 MB, matches=7124, FP=0, block_dl=10584.6 MB, speedup=11x
+
+--- coinjoin_privacy_user (120 scripts) ---
+  GCS:     9796.8 ms, 972.147 MB, matches=8134, FP=3, block_dl=12201.1 MB
+  F16:     341.6 ms, 955.893 MB, matches=8210, FP=79, block_dl=12313.5 MB, speedup=29x
+  F18:     1603.0 ms, 1075.21 MB, matches=8151, FP=20, block_dl=12224.9 MB, speedup=6x
+  F20:     1673.5 ms, 1194.53 MB, matches=8140, FP=9, block_dl=12209.1 MB, speedup=6x
+  F16+20:  667.3 ms, 1196.36 MB, matches=8131, FP=0, block_dl=12196.7 MB, speedup=15x
+  F10+10:  1787.8 ms, 769.399 MB, matches=8138, FP=7, block_dl=12206.7 MB, speedup=5x
+  F12+12:  764.2 ms, 877.372 MB, matches=8132, FP=1, block_dl=12198.4 MB, speedup=13x
+  F12+16:  695.7 ms, 930.661 MB, matches=8131, FP=0, block_dl=12196.7 MB, speedup=14x
+  F12+18:  982.4 ms, 957.306 MB, matches=8131, FP=0, block_dl=12196.7 MB, speedup=10x
+
+--- merchant_batch_settler (140 scripts) ---
+  GCS:     7882.3 ms, 972.147 MB, matches=21798, FP=3, block_dl=32723.2 MB
+  F16:     340.0 ms, 955.893 MB, matches=21863, FP=68, block_dl=32814.5 MB, speedup=23x
+  F18:     1598.8 ms, 1075.21 MB, matches=21815, FP=20, block_dl=32744.7 MB, speedup=5x
+  F20:     1670.7 ms, 1194.53 MB, matches=21800, FP=5, block_dl=32723.3 MB, speedup=5x
+  F16+20:  1225.3 ms, 1611.87 MB, matches=21795, FP=0, block_dl=32716.9 MB, speedup=6x
+  F10+10:  2220.3 ms, 959.657 MB, matches=21800, FP=5, block_dl=32721.4 MB, speedup=4x
+  F12+12:  962.3 ms, 1121.54 MB, matches=21795, FP=0, block_dl=32716.9 MB, speedup=8x
+  F12+16:  790.4 ms, 1256.09 MB, matches=21795, FP=0, block_dl=32716.9 MB, speedup=10x
+  F12+18:  1506.7 ms, 1323.37 MB, matches=21795, FP=0, block_dl=32716.9 MB, speedup=5x
+
+--- lightning_operator (180 scripts) ---
+  GCS:     10619.1 ms, 972.147 MB, matches=4055, FP=11, block_dl=6030.89 MB
+  F16:     547.9 ms, 955.893 MB, matches=4190, FP=146, block_dl=6233.22 MB, speedup=19x
+  F18:     1804.4 ms, 1075.21 MB, matches=4085, FP=41, block_dl=6078.54 MB, speedup=6x
+  F20:     1874.0 ms, 1194.53 MB, matches=4052, FP=8, block_dl=6025.84 MB, speedup=6x
+  F16+20:  736.1 ms, 1082.82 MB, matches=4044, FP=0, block_dl=6014.49 MB, speedup=14x
+  F10+10:  1940.1 ms, 746.182 MB, matches=4052, FP=8, block_dl=6025.33 MB, speedup=5x
+  F12+12:  936.2 ms, 819.711 MB, matches=4045, FP=1, block_dl=6016.11 MB, speedup=11x
+  F12+16:  891.3 ms, 853.81 MB, matches=4044, FP=0, block_dl=6014.49 MB, speedup=12x
+  F12+18:  1077.1 ms, 870.86 MB, matches=4044, FP=0, block_dl=6014.49 MB, speedup=10x
+
+--- custody_wallet (220 scripts) ---
+  GCS:     9813.8 ms, 972.147 MB, matches=11224, FP=8, block_dl=16784.6 MB
+  F16:     581.7 ms, 955.893 MB, matches=11360, FP=144, block_dl=16982.6 MB, speedup=17x
+  F18:     1849.3 ms, 1075.21 MB, matches=11251, FP=35, block_dl=16827.2 MB, speedup=5x
+  F20:     1914.9 ms, 1194.53 MB, matches=11224, FP=8, block_dl=16784.3 MB, speedup=5x
+  F16+20:  1100.5 ms, 1300.82 MB, matches=11216, FP=0, block_dl=16774 MB, speedup=9x
+  F10+10:  2255.6 ms, 851.29 MB, matches=11219, FP=3, block_dl=16779 MB, speedup=4x
+  F12+12:  1119.1 ms, 949.044 MB, matches=11216, FP=0, block_dl=16774 MB, speedup=9x
+  F12+16:  1019.5 ms, 1026.19 MB, matches=11216, FP=0, block_dl=16774 MB, speedup=10x
+  F12+18:  1433.0 ms, 1064.76 MB, matches=11216, FP=0, block_dl=16774 MB, speedup=7x
 
 --- watch_only_auditor (320 scripts) ---
-  GCS: 8461.6 ms, 972.147 MB, matches=23282, FP=15
-  Fuse16: 724.0 ms, 955.893 MB, matches=23406, FP=139, speedup=12x
+  GCS:     8319.8 ms, 972.147 MB, matches=23282, FP=15, block_dl=34760.7 MB
+  F16:     658.7 ms, 955.893 MB, matches=23406, FP=139, block_dl=34933.4 MB, speedup=13x
+  F18:     1928.4 ms, 1075.21 MB, matches=23307, FP=40, block_dl=34792.7 MB, speedup=4x
+  F20:     2001.7 ms, 1194.53 MB, matches=23276, FP=9, block_dl=34746.1 MB, speedup=4x
+  F16+20:  1773.7 ms, 1649.15 MB, matches=23267, FP=0, block_dl=34736.7 MB, speedup=5x
+  F10+10:  2822.5 ms, 1010.6 MB, matches=23271, FP=4, block_dl=34741.3 MB, speedup=3x
+  F12+12:  1496.7 ms, 1154.88 MB, matches=23268, FP=1, block_dl=34738.2 MB, speedup=6x
+  F12+16:  1307.8 ms, 1300.53 MB, matches=23267, FP=0, block_dl=34736.7 MB, speedup=6x
+  F12+18:  2086.1 ms, 1373.35 MB, matches=23267, FP=0, block_dl=34736.7 MB, speedup=4x
+
+--- exchange_hot_wallet (480 scripts) ---
+  GCS:     8582.6 ms, 972.147 MB, matches=27539, FP=9, block_dl=41300.7 MB
+  F16:     868.6 ms, 955.893 MB, matches=27666, FP=136, block_dl=41489.5 MB, speedup=10x
+  F18:     2144.6 ms, 1075.21 MB, matches=27560, FP=30, block_dl=41335.5 MB, speedup=4x
+  F20:     2213.1 ms, 1194.53 MB, matches=27542, FP=12, block_dl=41312.2 MB, speedup=4x
+  F16+20:  2249.5 ms, 1688.8 MB, matches=27530, FP=0, block_dl=41290 MB, speedup=4x
+  F10+10:  3338.0 ms, 1050.18 MB, matches=27546, FP=16, block_dl=41310.8 MB, speedup=3x
+  F12+12:  1956.3 ms, 1185.39 MB, matches=27530, FP=0, block_dl=41290 MB, speedup=4x
+  F12+16:  1753.2 ms, 1341.17 MB, matches=27530, FP=0, block_dl=41290 MB, speedup=5x
+  F12+18:  2581.7 ms, 1419.06 MB, matches=27530, FP=0, block_dl=41290 MB, speedup=3x
 
 
-================================================================================
-SUMMARY TABLE
-================================================================================
+========================================================================================
+SUMMARY TABLE — CPU (ms)
+========================================================================================
 
-Wallet                    Scripts │    GCS ms    F16 ms Speedup │  GCS MB  F16 MB  Δ MB │ GCS hit F16 hit Truth │ GCS FP F16 FP
-──────────────────────────────────┼───────────────────────────────┼────────────────────────┼─────────────────────────┼───────────────
-simple_user                    24 │   10126.5     138.3     73x │ 972.147 955.893  -16.3 │    1037    1053  1034 │      3     19
-cold_storage_vault             60 │   10562.3     245.6     43x │ 972.147 955.893  -16.3 │     762     813   761 │      1     52
-legacy_migrator                90 │    8261.3     267.7     31x │ 972.147 955.893  -16.3 │   18180   18226 18179 │      1     47
-taproot_power_user             96 │    9996.0     321.6     31x │ 972.147 955.893  -16.3 │    7128    7192  7124 │      4     68
-coinjoin_privacy_user         120 │    9891.9     341.6     29x │ 972.147 955.893  -16.3 │    8134    8210  8131 │      3     79
-merchant_batch_settler        140 │    7992.2     383.8     21x │ 972.147 955.893  -16.3 │   21798   21863 21795 │      3     68
-lightning_operator            180 │   10770.6     570.6     19x │ 972.147 955.893  -16.3 │    4055    4190  4044 │     11    146
-custody_wallet                220 │    9933.7     618.7     16x │ 972.147 955.893  -16.3 │   11224   11360 11216 │      8    144
-watch_only_auditor            320 │    8461.6     724.0     12x │ 972.147 955.893  -16.3 │   23282   23406 23267 │     15    139
-exchange_hot_wallet           480 │    8758.1     978.2      9x │ 972.147 955.893  -16.3 │   27539   27666 27530 │      9    136
+Wallet                    Scripts │       GCS       F16       F18       F20    F16+20    F10+10    F12+12    F12+16    F12+18
+────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────
+simple_user                    24 │   10009.3     128.1    1394.5    1461.4     171.2    1270.4     446.1     435.6     477.2
+cold_storage_vault             60 │   10475.1     237.7    1506.5    1572.8     274.6    1416.6     560.9     549.9     593.1
+legacy_migrator                90 │    8211.6     229.0    1498.7    1565.6     929.1    1945.7     778.5     639.4    1219.2
+taproot_power_user             96 │    9923.0     311.5    1578.7    1643.7     580.8    1703.1     716.9     658.6     892.5
+coinjoin_privacy_user         120 │    9796.8     341.6    1603.0    1673.5     667.3    1787.8     764.2     695.7     982.4
+merchant_batch_settler        140 │    7882.3     340.0    1598.8    1670.7    1225.3    2220.3     962.3     790.4    1506.7
+lightning_operator            180 │   10619.1     547.9    1804.4    1874.0     736.1    1940.1     936.2     891.3    1077.1
+custody_wallet                220 │    9813.8     581.7    1849.3    1914.9    1100.5    2255.6    1119.1    1019.5    1433.0
+watch_only_auditor            320 │    8319.8     658.7    1928.4    2001.7    1773.7    2822.5    1496.7    1307.8    2086.1
+exchange_hot_wallet           480 │    8582.6     868.6    2144.6    2213.1    2249.5    3338.0    1956.3    1753.2    2581.7
 
-================================================================================
+========================================================================================
+SUMMARY TABLE — Filter Bandwidth (MB)
+========================================================================================
+
+Wallet                    Scripts │       GCS       F16       F18       F20    F16+20    F10+10    F12+12    F12+16    F12+18
+────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────
+simple_user                    24 │   972.147   955.893   1075.21   1194.53     989.3   628.785   741.797   749.966   754.051
+cold_storage_vault             60 │   972.147   955.893   1075.21   1194.53   979.647   642.782   740.866   748.723   752.652
+legacy_migrator                90 │   972.147   955.893   1075.21   1194.53    1485.2   888.521    1042.7   1151.01   1205.17
+taproot_power_user             96 │   972.147   955.893   1075.21   1194.53   1152.96   741.304   848.851   892.645   914.542
+coinjoin_privacy_user         120 │   972.147   955.893   1075.21   1194.53   1196.36   769.399   877.372   930.661   957.306
+merchant_batch_settler        140 │   972.147   955.893   1075.21   1194.53   1611.87   959.657   1121.54   1256.09   1323.37
+lightning_operator            180 │   972.147   955.893   1075.21   1194.53   1082.82   746.182   819.711    853.81    870.86
+custody_wallet                220 │   972.147   955.893   1075.21   1194.53   1300.82    851.29   949.044   1026.19   1064.76
+watch_only_auditor            320 │   972.147   955.893   1075.21   1194.53   1649.15    1010.6   1154.88   1300.53   1373.35
+exchange_hot_wallet           480 │   972.147   955.893   1075.21   1194.53    1688.8   1050.18   1185.39   1341.17   1419.06
+
+========================================================================================
+SUMMARY TABLE — False Positives & Speedup vs GCS
+========================================================================================
+
+Wallet                    Scripts │   GCS   F16   F18   F20 F1620 F1010 F1212 F1216 F1218 │  F16x  F18x  F20x F1620x F1010x F1212x F1216x F1218x
+────────────────────────────────────┼──────────────────────────────────────────────────────┼────────────────────────────────────────────────────
+simple_user                    24 │     3    19     7     1     0     1     1     0     0 │   78x    7x    7x    58x     8x    22x    23x    21x
+cold_storage_vault             60 │     1    52    17     5     0     2     0     0     0 │   44x    7x    7x    38x     7x    19x    19x    18x
+legacy_migrator                90 │     1    47    11     1     0     2     0     0     0 │   36x    5x    5x     9x     4x    11x    13x     7x
+taproot_power_user             96 │     4    68    17     5     0     4     0     0     0 │   32x    6x    6x    17x     6x    14x    15x    11x
+coinjoin_privacy_user         120 │     3    79    20     9     0     7     1     0     0 │   29x    6x    6x    15x     5x    13x    14x    10x
+merchant_batch_settler        140 │     3    68    20     5     0     5     0     0     0 │   23x    5x    5x     6x     4x     8x    10x     5x
+lightning_operator            180 │    11   146    41     8     0     8     1     0     0 │   19x    6x    6x    14x     5x    11x    12x    10x
+custody_wallet                220 │     8   144    35     8     0     3     0     0     0 │   17x    5x    5x     9x     4x     9x    10x     7x
+watch_only_auditor            320 │    15   139    40     9     0     4     1     0     0 │   13x    4x    4x     5x     3x     6x     6x     4x
+exchange_hot_wallet           480 │     9   136    30    12     0    16     0     0     0 │   10x    4x    4x     4x     3x     4x     5x     3x
+
+========================================================================================
+SUMMARY TABLE — Block Download TP+FP (MB)
+========================================================================================
+
+Wallet                    Scripts │       GCS       F16       F18       F20    F16+20    F10+10    F12+12    F12+16    F12+18
+────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────
+simple_user                    24 │   1572.11   1599.91   1581.38   1569.76   1568.95    1570.6   1570.91   1568.95   1568.95
+cold_storage_vault             60 │   1110.91   1188.05   1137.45   1118.69   1110.47   1113.67   1110.47   1110.47   1110.47
+legacy_migrator                90 │   26973.2   27047.2   26990.6   26974.6     26973   26976.3     26973     26973     26973
+taproot_power_user             96 │   10589.5   10687.6   10611.5   10592.6   10584.6     10589   10584.6   10584.6   10584.6
+coinjoin_privacy_user         120 │   12201.1   12313.5   12224.9   12209.1   12196.7   12206.7   12198.4   12196.7   12196.7
+merchant_batch_settler        140 │   32723.2   32814.5   32744.7   32723.3   32716.9   32721.4   32716.9   32716.9   32716.9
+lightning_operator            180 │   6030.89   6233.22   6078.54   6025.84   6014.49   6025.33   6016.11   6014.49   6014.49
+custody_wallet                220 │   16784.6   16982.6   16827.2   16784.3     16774     16779     16774     16774     16774
+watch_only_auditor            320 │   34760.7   34933.4   34792.7   34746.1   34736.7   34741.3   34738.2   34736.7   34736.7
+exchange_hot_wallet           480 │   41300.7   41489.5   41335.5   41312.2     41290   41310.8     41290     41290     41290
+
+========================================================================================
+SUMMARY TABLE — Total Bandwidth: Filters + Block Downloads (MB)
+========================================================================================
+
+Wallet                    Scripts │       GCS       F16       F18       F20    F16+20    F10+10    F12+12    F12+16    F12+18
+────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────
+simple_user                    24 │  2544.257  2555.803  2656.590  2764.290  2558.250  2199.385  2312.707  2318.916  2323.001
+cold_storage_vault             60 │  2083.057  2143.943  2212.660  2313.220  2090.117  1756.452  1851.336  1859.193  1863.122
+legacy_migrator                90 │ 27945.347 28003.093 28065.810 28169.130 28458.200 27864.821 28015.700 28124.010 28178.170
+taproot_power_user             96 │ 11561.647 11643.493 11686.710 11787.130 11737.560 11330.304 11433.451 11477.245 11499.142
+coinjoin_privacy_user         120 │ 13173.247 13269.393 13300.110 13403.630 13393.060 12976.099 13075.772 13127.361 13154.006
+merchant_batch_settler        140 │ 33695.347 33770.393 33819.910 33917.830 34328.770 33681.057 33838.440 33972.990 34040.270
+lightning_operator            180 │  7003.037  7189.113  7153.750  7220.370  7097.310  6771.512  6835.821  6868.300  6885.350
+custody_wallet                220 │ 17756.747 17938.493 17902.410 17978.830 18074.820 17630.290 17723.044 17800.190 17838.760
+watch_only_auditor            320 │ 35732.847 35889.293 35867.910 35940.630 36385.850 35751.900 35893.080 36037.230 36110.050
+exchange_hot_wallet           480 │ 42272.847 42445.393 42410.710 42506.730 42978.800 42360.980 42475.390 42631.170 42709.060
+
+========================================================================================
 FP = filter_matches - ground_truth_hits (actual false positives)
-================================================================================
+Block download = all matched blocks (TP + FP)
+Total bandwidth = filters + inner filters on-demand + block downloads
+========================================================================================
