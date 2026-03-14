@@ -1520,10 +1520,12 @@ struct UnifiedBlockData {
     std::vector<unsigned char> gcs_encoded;
     // Common SipHash keys from block hash.
     uint64_t k0, k1;
-    // Flat / outer-layer serialized filters.
+    // Flat / outer-layer serialized filters (original k0/k1).
     std::vector<unsigned char> f16_ser;
     std::vector<unsigned char> f12_ser;
     std::vector<unsigned char> f10_ser;
+    std::vector<unsigned char> f18_flat_ser;
+    std::vector<unsigned char> f20_flat_ser;
     // Inner-layer serialized filters (domain-separated keys).
     uint64_t f10i_k0, f10i_k1;
     std::vector<unsigned char> f10i_ser;
@@ -1541,13 +1543,15 @@ struct UnifiedBlockData {
 struct WalletRunningStats {
     std::size_t gcs_matches{0}, gcs_block_dl_bytes{0};
     std::size_t f16_matches{0}, f16_block_dl_bytes{0};
+    std::size_t f18_matches{0}, f18_block_dl_bytes{0};
+    std::size_t f20_matches{0}, f20_block_dl_bytes{0};
     std::size_t f1620_f16_hits{0}, f1620_matches{0}, f1620_f20_bw{0}, f1620_block_dl_bytes{0};
     std::size_t f1010_f10_hits{0}, f1010_matches{0}, f1010_f10i_bw{0}, f1010_block_dl_bytes{0};
     std::size_t f1212_f12_hits{0}, f1212_matches{0}, f1212_f12i_bw{0}, f1212_block_dl_bytes{0};
     std::size_t f1216_f12_hits{0}, f1216_matches{0}, f1216_f16_bw{0}, f1216_block_dl_bytes{0};
     std::size_t f1218_f12_hits{0}, f1218_matches{0}, f1218_f18_bw{0}, f1218_block_dl_bytes{0};
     // Cumulative query time in nanoseconds per filter type.
-    int64_t gcs_ns{0}, f16_ns{0}, f1620_ns{0}, f1010_ns{0}, f1212_ns{0}, f1216_ns{0}, f1218_ns{0};
+    int64_t gcs_ns{0}, f16_ns{0}, f18_ns{0}, f20_ns{0}, f1620_ns{0}, f1010_ns{0}, f1212_ns{0}, f1216_ns{0}, f1218_ns{0};
     // Ground truth hits seen so far.
     std::size_t gt_count{0};
 };
@@ -1596,13 +1600,15 @@ static void PrintProgressReport(
     const std::vector<WalletScenarioData>& wallets,
     const std::vector<std::string>& short_names,
     const std::vector<WalletRunningStats>& stats,
-    double gcs_mb, double f16_mb, double f12_mb, double f10_mb)
+    double gcs_mb, double f16_mb, double f18_flat_mb, double f20_flat_mb, double f12_mb, double f10_mb)
 {
     std::cout << "\n=== " << n_blocks << " blocks ===\n";
     for (std::size_t wi = 0; wi < wallets.size(); ++wi) {
         const auto& ws = stats[wi];
         const std::size_t gcs_fp = ws.gcs_matches > ws.gt_count ? ws.gcs_matches - ws.gt_count : 0;
         const std::size_t f16_fp = ws.f16_matches > ws.gt_count ? ws.f16_matches - ws.gt_count : 0;
+        const std::size_t f18_fp = ws.f18_matches > ws.gt_count ? ws.f18_matches - ws.gt_count : 0;
+        const std::size_t f20_fp = ws.f20_matches > ws.gt_count ? ws.f20_matches - ws.gt_count : 0;
         const std::size_t f1620_fp = ws.f1620_matches > ws.gt_count ? ws.f1620_matches - ws.gt_count : 0;
         const std::size_t f1010_fp = ws.f1010_matches > ws.gt_count ? ws.f1010_matches - ws.gt_count : 0;
         const std::size_t f1212_fp = ws.f1212_matches > ws.gt_count ? ws.f1212_matches - ws.gt_count : 0;
@@ -1612,6 +1618,8 @@ static void PrintProgressReport(
         // Total bandwidth = filter_download + inner_on_demand + block_download (all in MB).
         const double gcs_total_mb = gcs_mb + static_cast<double>(ws.gcs_block_dl_bytes) / (1024.0 * 1024.0);
         const double f16_total_mb = f16_mb + static_cast<double>(ws.f16_block_dl_bytes) / (1024.0 * 1024.0);
+        const double f18_total_mb = f18_flat_mb + static_cast<double>(ws.f18_block_dl_bytes) / (1024.0 * 1024.0);
+        const double f20_total_mb = f20_flat_mb + static_cast<double>(ws.f20_block_dl_bytes) / (1024.0 * 1024.0);
         const double f1620_total_mb = f16_mb
             + static_cast<double>(ws.f1620_f20_bw) / (1024.0 * 1024.0)
             + static_cast<double>(ws.f1620_block_dl_bytes) / (1024.0 * 1024.0);
@@ -1630,20 +1638,25 @@ static void PrintProgressReport(
 
         const double gcs_ms = static_cast<double>(ws.gcs_ns) / 1e6;
         const double f16_ms = static_cast<double>(ws.f16_ns) / 1e6;
+        const double f18_ms = static_cast<double>(ws.f18_ns) / 1e6;
+        const double f20_ms = static_cast<double>(ws.f20_ns) / 1e6;
         const double f1620_ms = static_cast<double>(ws.f1620_ns) / 1e6;
         const double f1010_ms = static_cast<double>(ws.f1010_ns) / 1e6;
         const double f1212_ms = static_cast<double>(ws.f1212_ns) / 1e6;
         const double f1216_ms = static_cast<double>(ws.f1216_ns) / 1e6;
         const double f1218_ms = static_cast<double>(ws.f1218_ns) / 1e6;
 
-        char buf[896];
+        char buf[1200];
         std::snprintf(buf, sizeof(buf),
             "  %-20s(%3zu): GCS=(%.1fms %.1fMB FP=%zu) F16=(%.1fms %.1fMB FP=%zu) "
+            "F18=(%.1fms %.1fMB FP=%zu) F20=(%.1fms %.1fMB FP=%zu) "
             "F16+20=(%.1fms %.1fMB FP=%zu) F10+10=(%.1fms %.1fMB FP=%zu) F12+12=(%.1fms %.1fMB FP=%zu) "
             "F12+16=(%.1fms %.1fMB FP=%zu) F12+18=(%.1fms %.1fMB FP=%zu)",
             short_names[wi].c_str(), wallets[wi].wallet_scripts.size(),
             gcs_ms, gcs_total_mb, gcs_fp,
             f16_ms, f16_total_mb, f16_fp,
+            f18_ms, f18_total_mb, f18_fp,
+            f20_ms, f20_total_mb, f20_fp,
             f1620_ms, f1620_total_mb, f1620_fp,
             f1010_ms, f1010_total_mb, f1010_fp,
             f1212_ms, f1212_total_mb, f1212_fp,
@@ -1688,7 +1701,8 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
     std::vector<WalletRunningStats> wallet_stats(wallets.size());
 
     std::size_t skipped_small{0}, construction_failures{0};
-    std::size_t gcs_bytes{0}, f16_bytes{0}, f12_bytes{0}, f10_bytes{0}, f10i_bytes{0}, f12i_bytes{0}, f16i_bytes{0}, f18_bytes{0}, f20_bytes{0};
+    std::size_t gcs_bytes{0}, f16_bytes{0}, f12_bytes{0}, f10_bytes{0}, f18_flat_bytes{0}, f20_flat_bytes{0};
+    std::size_t f10i_bytes{0}, f12i_bytes{0}, f16i_bytes{0}, f18_bytes{0}, f20_bytes{0};
     std::size_t total_block_index{0};
 
     constexpr std::size_t DOTS_PER_LINE = 50;
@@ -1739,6 +1753,8 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
             auto gcs_enc = gcs_filter.GetEncoded();
 
             Fuse16Filter f16(k0, k1, elements);
+            Fuse18Filter f18_flat(k0, k1, elements);
+            Fuse20Filter f20_flat(k0, k1, elements);
             Fuse12Filter f12(k0, k1, elements);
             Fuse10Filter f10(k0, k1, elements);
             Fuse10Filter f10i(f10i_k0, f10i_k1, elements); // inner F10 (domain-separated)
@@ -1748,6 +1764,8 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
             Fuse20Filter f20(f20_k0, f20_k1, elements);
 
             auto f16_s = f16.Serialize();
+            auto f18_flat_s = f18_flat.Serialize();
+            auto f20_flat_s = f20_flat.Serialize();
             auto f12_s = f12.Serialize();
             auto f10_s = f10.Serialize();
             auto f10i_s = f10i.Serialize();
@@ -1758,6 +1776,8 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
 
             gcs_bytes += gcs_enc.size();
             f16_bytes += f16_s.size();
+            f18_flat_bytes += f18_flat_s.size();
+            f20_flat_bytes += f20_flat_s.size();
             f12_bytes += f12_s.size();
             f10_bytes += f10_s.size();
             f10i_bytes += f10i_s.size();
@@ -1825,6 +1845,30 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                     } else {
                         // No F16 hit => F16+20 only paid the F16 scan cost.
                         ws.f1620_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                    }
+                }
+
+                // F18 standalone
+                {
+                    const auto t0 = std::chrono::steady_clock::now();
+                    bool hit = f18_flat.MatchAny(scripts);
+                    const auto t1 = std::chrono::steady_clock::now();
+                    ws.f18_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                    if (hit) {
+                        ++ws.f18_matches;
+                        ws.f18_block_dl_bytes += bsz;
+                    }
+                }
+
+                // F20 standalone
+                {
+                    const auto t0 = std::chrono::steady_clock::now();
+                    bool hit = f20_flat.MatchAny(scripts);
+                    const auto t1 = std::chrono::steady_clock::now();
+                    ws.f20_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                    if (hit) {
+                        ++ws.f20_matches;
+                        ws.f20_block_dl_bytes += bsz;
                     }
                 }
 
@@ -1939,6 +1983,7 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                 gcs_params, std::move(gcs_enc),
                 k0, k1,
                 std::move(f16_s), std::move(f12_s), std::move(f10_s),
+                std::move(f18_flat_s), std::move(f20_flat_s),
                 f10i_k0, f10i_k1, std::move(f10i_s),
                 f12i_k0, f12i_k1, std::move(f12i_s),
                 f16i_k0, f16i_k1, std::move(f16i_s),
@@ -1960,10 +2005,12 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
         if (blocks.size() >= next_report) {
             const double g_mb = static_cast<double>(gcs_bytes) / (1024.0 * 1024.0);
             const double f16_mb_now = static_cast<double>(f16_bytes) / (1024.0 * 1024.0);
+            const double f18_flat_mb_now = static_cast<double>(f18_flat_bytes) / (1024.0 * 1024.0);
+            const double f20_flat_mb_now = static_cast<double>(f20_flat_bytes) / (1024.0 * 1024.0);
             const double f12_mb_now = static_cast<double>(f12_bytes) / (1024.0 * 1024.0);
             const double f10_mb_now = static_cast<double>(f10_bytes) / (1024.0 * 1024.0);
             PrintProgressReport(blocks.size(), wallets, short_names, wallet_stats,
-                                g_mb, f16_mb_now, f12_mb_now, f10_mb_now);
+                                g_mb, f16_mb_now, f18_flat_mb_now, f20_flat_mb_now, f12_mb_now, f10_mb_now);
             std::snprintf(line_hdr, sizeof(line_hdr), "%6zu ", total_block_index);
             std::cout << line_hdr << std::flush;
             dots_on_line = 0;
@@ -1979,11 +2026,15 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
 
     const double gcs_mb = static_cast<double>(gcs_bytes) / (1024.0 * 1024.0);
     const double f16_mb = static_cast<double>(f16_bytes) / (1024.0 * 1024.0);
+    const double f18_flat_mb = static_cast<double>(f18_flat_bytes) / (1024.0 * 1024.0);
+    const double f20_flat_mb = static_cast<double>(f20_flat_bytes) / (1024.0 * 1024.0);
     const double f12_mb = static_cast<double>(f12_bytes) / (1024.0 * 1024.0);
 
     std::cout << "[AllFilters] " << blocks.size() << " blocks"
               << " (skipped " << skipped_small << " small, " << construction_failures << " failed)"
-              << ", GCS=" << gcs_mb << " MB, F16=" << f16_mb << " MB, F12=" << f12_mb << " MB"
+              << ", GCS=" << gcs_mb << " MB, F16=" << f16_mb << " MB"
+              << ", F18=" << f18_flat_mb << " MB, F20=" << f20_flat_mb << " MB"
+              << ", F12=" << f12_mb << " MB"
               << std::endl;
 
     // === EMIT FINAL [AllFilters] LINES (for shell parsing) + TIMING LOOPS ===
@@ -2039,6 +2090,50 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                 std::size_t mc{0};
                 for (const UnifiedBlockData& b : blocks) {
                     Fuse16Filter f = Fuse16Filter::Deserialize(b.k0, b.k1, b.f16_ser);
+                    if (f.MatchAny(scripts)) ++mc;
+                }
+                ankerl::nanobench::doNotOptimizeAway(mc);
+            });
+        }
+
+        // --- F18 standalone ---
+        {
+            const double block_dl_mb = static_cast<double>(ws.f18_block_dl_bytes) / (1024.0 * 1024.0);
+            std::cout << "[AllFilters] wallet=" << short_name
+                      << " scripts=" << n_scripts
+                      << " filter=F18 filter_mb=" << f18_flat_mb
+                      << " matches=" << ws.f18_matches
+                      << " ground_truth=" << gt_count
+                      << " block_download=" << block_dl_mb
+                      << std::endl;
+
+            bench.name("F18/" + short_name);
+            bench.run([&] {
+                std::size_t mc{0};
+                for (const UnifiedBlockData& b : blocks) {
+                    Fuse18Filter f = Fuse18Filter::Deserialize(b.k0, b.k1, b.f18_flat_ser);
+                    if (f.MatchAny(scripts)) ++mc;
+                }
+                ankerl::nanobench::doNotOptimizeAway(mc);
+            });
+        }
+
+        // --- F20 standalone ---
+        {
+            const double block_dl_mb = static_cast<double>(ws.f20_block_dl_bytes) / (1024.0 * 1024.0);
+            std::cout << "[AllFilters] wallet=" << short_name
+                      << " scripts=" << n_scripts
+                      << " filter=F20 filter_mb=" << f20_flat_mb
+                      << " matches=" << ws.f20_matches
+                      << " ground_truth=" << gt_count
+                      << " block_download=" << block_dl_mb
+                      << std::endl;
+
+            bench.name("F20/" + short_name);
+            bench.run([&] {
+                std::size_t mc{0};
+                for (const UnifiedBlockData& b : blocks) {
+                    Fuse20Filter f = Fuse20Filter::Deserialize(b.k0, b.k1, b.f20_flat_ser);
                     if (f.MatchAny(scripts)) ++mc;
                 }
                 ankerl::nanobench::doNotOptimizeAway(mc);

@@ -656,6 +656,24 @@ private:
     uint32_t *dst = static_cast<uint32_t *>(storage_.raw_ptr());
     constexpr uint32_t mask = fp_mask();
 
+    if constexpr (FingerprintBits == 12) {
+      uint32_t i = 0;
+      for (; i + 1 < ArrayLength; i += 2) {
+        const uint32_t packed = (uint32_t)src[0] |
+                                ((uint32_t)src[1] << 8) |
+                                ((uint32_t)src[2] << 16);
+        dst[i] = packed & mask;
+        dst[i + 1] = packed >> 12;
+        src += 3;
+      }
+      if (i < ArrayLength) {
+        const uint32_t packed = (uint32_t)src[0] |
+                                ((uint32_t)src[1] << 8);
+        dst[i] = packed & mask;
+      }
+      return;
+    }
+
     uint64_t acc = 0;
     unsigned bits_in_acc = 0;
     uint32_t src_pos = 0;
