@@ -381,6 +381,7 @@
         <a href="#wallets">Wallet Simulation</a>
         <a href="#validation">Validation</a>
         <a href="#benchmarks">Benchmarks</a>
+        <a href="#hierarchical-filters">A bandwidth optimization - Hierarchical Fuse Filters</a>
         <a href="#path">Protocol Path</a>
         <a href="#conclusion">Conclusion</a>
       </nav>
@@ -408,7 +409,9 @@
         </section>
 
         <section id="process">
-          <h2>Summary of BIP 158</h2>
+          <details class="collapsible">
+            <summary>Summary of BIP 158</summary>
+            <div class="collapsible-body">
           <p>In short, the server sends a compact probabilistic summary for each block, which lets the client cheaply test whether a wallet-relevant script element may be present in that block.</p>
           <p>We refer to the resulting per-block structure as the basic block filter; its encoding uses Golomb-Rice-coded sets (GCS).</p>
           <p>Under BIP 158, the server builds a compact block filter for each block. From that filter, the client can tell whether the block may contain any script element relevant to the wallet. If the filter signals a match, the block becomes a candidate and the client can inspect it in full.</p>
@@ -440,6 +443,8 @@
             <li><a href="https://en.bitcoin.it/wiki/BIP_0158">https://en.bitcoin.it/wiki/BIP_0158</a></li>
             <li><a href="https://ellemouton.com/posts/bip158/">https://ellemouton.com/posts/bip158/</a></li>
           </ul>
+            </div>
+          </details>
         </section>
 
         <section id="fuse">
@@ -462,6 +467,27 @@
               </tbody>
             </table>
           </div>
+
+          <h3 id="hierarchical-filters">A bandwidth optimization - Hierarchical Fuse Filters</h3>
+          <p>We introduce a small improvement to Binary Fuse Filters: a hierarchical two-stage design that aims to reduce bandwidth without giving up the core speed advantage.</p>
+          <p>A hierarchical filter splits the decision into two stages. The client still downloads one small outer filter for every block and queries it locally. If that outer filter reports a possible match, the client fetches a second, more selective inner filter for that block. Only if the inner filter also reports a match does the client download the full block.</p>
+          <p>The naming convention follows that two-stage structure: <code>F12+16</code> means a <code>Fuse12</code> outer filter plus a <code>Fuse16</code> inner filter. Likewise, <code>F10+10</code> uses <code>Fuse10</code> in both stages.</p>
+          <pre>HIERARCHICAL FILTER FLOW
+
+download outer filter for every block
+           |
+        no match -> stop
+           |
+        match
+           v
+   fetch and query inner filter
+           |
+        no match -> stop
+           |
+        match
+           v
+   download full block</pre>
+          <p>The benchmarked bandwidth numbers in this document assume exactly that on-demand inner-filter retrieval model: outer filters for all blocks, inner filters only for outer matches, and full blocks only for final matches. That is also why hierarchical filters raise a privacy issue. Under BIP 158, the peer sees only that the client downloads one filter per block. In a hierarchical scheme, the peer can also observe which specific blocks triggered second-stage inner-filter requests unless the protocol adds a privacy defense.</p>
 
           <h3>Proof of Concept Implementation</h3>
           <p>We use the <code>xor_singleheader</code> C library as a reference implementation of Binary Fuse and XOR filters: <a href="https://github.com/FastFilter/xor_singleheader">https://github.com/FastFilter/xor_singleheader</a></p>
@@ -616,7 +642,9 @@
           <p>where <code>candidate_matches</code> is the number of blocks the filter flagged, and <code>true_hits_in_range</code> is the number of ground-truth blocks within the scanned range.</p>
           <p>The streaming approach processes one block at a time and discards its elements immediately, so memory usage stays low even for 50k+ blocks.</p>
 
-          <h3>Running ground-truth validation for all filter types (50k blocks)</h3>
+          <details class="collapsible">
+            <summary>How to run</summary>
+            <div class="collapsible-body">
           <p>A convenience script runs all the wallet use cases against all 4 filter types (GCS, Fuse16, Fuse8, Xor8) and produces a summary table:</p>
           <pre>./light_client_research/benchmark_tools/false_positive_check.sh 50000</pre>
           <p>The script iterates over every wallet scenario file, runs the <code>StreamingGroundTruthValidation</code> benchmark for each, parses the output, and checks that <code>false_negatives=0</code> for every filter. If any false negative is detected, the script prints an error banner and exits with a non-zero code. Results are saved to <code>light_client_research/results/false_positive_check_50000.txt</code>.</p>
@@ -635,6 +663,8 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
     construction_failures=0 true_hits_in_range=... candidate_matches=...
     false_negatives=0 false_positives=...</pre>
           <p>The <code>false_negatives=0</code> field must be zero for every filter type. Any non-zero value indicates a correctness bug.</p>
+            </div>
+          </details>
         </section>
 
         <section id="benchmarks">
@@ -678,7 +708,9 @@ So the download cost is paid for every reported match, not only for true hits.
 For hierarchical schemes, "filter_data" includes both the outer filters and any
 inner filters fetched on demand.</pre>
 
-          <h3>How to run</h3>
+          <details class="collapsible">
+            <summary>How to run</summary>
+            <div class="collapsible-body">
           <pre># Build (release mode, required for meaningful timings):
 cmake -B build-release -DCMAKE_BUILD_TYPE=Release -DBUILD_BENCH=ON
 cmake --build build-release --target bench_bitcoin -j $(nproc)
@@ -699,9 +731,11 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
 
 # All wallets, flat and hierarchical filter matrix:
 ./light_client_research/benchmark_tools/wallet_benchmark.sh 50000</pre>
-          <p>The <code>wallet_benchmark.sh</code> script runs the current all-wallet comparison (GCS, flat Fuse variants, and hierarchical variants), computes actual false positives from ground-truth data, and saves summary tables to <code>light_client_research/results/wallet_benchmark_results_&lt;blocks&gt;.txt</code>. The checked-in 50k result file is here: <a href="https://github.com/purszki/bitcoin_research_01/blob/fuse_filter_research_docs/light_client_research/results/wallet_benchmark_results_50000.txt">wallet_benchmark_results_50000.txt</a>.</p>
-          <p>To run both ground-truth validation and benchmarks in one go:</p>
-          <pre>./light_client_research/benchmark_tools/bench_all.sh 50000</pre>
+            <p>The <code>wallet_benchmark.sh</code> script runs the current all-wallet comparison (GCS, flat Fuse variants, and hierarchical variants), computes actual false positives from ground-truth data, and saves summary tables to <code>light_client_research/results/wallet_benchmark_results_&lt;blocks&gt;.txt</code>. The checked-in 50k result file is here: <a href="https://github.com/purszki/bitcoin_research_01/blob/fuse_filter_research_docs/light_client_research/results/wallet_benchmark_results_50000.txt">wallet_benchmark_results_50000.txt</a>.</p>
+            <p>To run both ground-truth validation and benchmarks in one go:</p>
+            <pre>./light_client_research/benchmark_tools/bench_all.sh 50000</pre>
+            </div>
+          </details>
 
           <h3>Profiling Results: Fuse8 and Xor8 (20k blocks)</h3>
           <p>Comparing the speed and FP ratio of all the filters, the results match with the excepted values:</p>
@@ -993,7 +1027,8 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
       'binaryfusefilter.h': 'src/bench/xor_singleheader/binaryfusefilter.h',
       'binaryfusefilter.hpp': 'src/bench/xor_singleheader/binaryfusefilter.hpp',
       'xorfilter.h': 'src/bench/xor_singleheader/xorfilter.h',
-      'README.md': 'src/bench/xor_singleheader/README.md'
+      'README.md': 'src/bench/xor_singleheader/README.md',
+      'REPRODUCE.md': 'light_client_research/REPRODUCE.md'
     };
 
     const sourceRepoBase = 'https://github.com/purszki/bitcoin_research_01/blob/fuse_filter_research/';
