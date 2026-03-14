@@ -469,7 +469,7 @@
           </div>
 
           <h3 id="hierarchical-filters">A bandwidth optimization - Hierarchical Fuse Filters</h3>
-          <p>We introduce a small improvement to Binary Fuse Filters: a hierarchical two-stage design that aims to reduce bandwidth without giving up the core speed advantage.</p>
+          <p>We propose an original contribution on top of Binary Fuse Filters: a hierarchical two-stage design that aims to reduce bandwidth without giving up the core speed advantage. To our knowledge, this two-stage outer/inner filter architecture has not been explored in the context of Bitcoin light client block filtering before.</p>
           <p>A hierarchical filter splits the decision into two stages. The client still downloads one small outer filter for every block and queries it locally. If that outer filter reports a possible match, the client fetches a second, more selective inner filter for that block. Only if the inner filter also reports a match does the client download the full block.</p>
           <p>The naming convention follows that two-stage structure: <code>F12+16</code> means a <code>Fuse12</code> outer filter plus a <code>Fuse16</code> inner filter. Likewise, <code>F10+10</code> uses <code>Fuse10</code> in both stages.</p>
           <pre>HIERARCHICAL FILTER FLOW
@@ -979,6 +979,35 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
           <p>A second result is that hierarchical Fuse filters may open a better bandwidth frontier, but that line of work is still experimental. It needs more optimization and explicit privacy-preserving protocol design, because on-demand inner-filter retrieval could leak wallet interest if handled naively. Beyond that, the path to deployment requires a native C++ implementation, ARM profiling, deterministic construction and wire-format specs, and a BIP proposal. The filter would deploy as an optional new type — no consensus change, no breaking change, gradual adoption.</p>
         </section>
 
+        <section id="what-went-wrong">
+          <details class="collapsible">
+            <summary>"There ain't no such thing as a free lunch"</summary>
+            <div class="collapsible-body">
+              <p>Research rarely follows a straight line. Here is what actually happened — the dead ends, the crashes, and the bugs that shaped the final result.</p>
+
+              <h3>The hierarchical GCS era</h3>
+              <p>The project did not start with Fuse filters at all. The first idea was to keep GCS but make it faster with a multi-level design: a coarse "window filter" covering N blocks, checked first, with per-block filters only consulted on a match. On testnet this looked decent — a 5.4x geometric-mean speedup at 50k blocks. But it was still O(N) Golomb decode per query, the outer layer leaked false positives no matter how we tuned the parameters, and positive-heavy workloads barely improved. Two git commits are titled <code>saving work-deadend</code>. The entire hierarchical GCS codebase was eventually deleted.</p>
+
+              <h3>The mainnet data saga</h3>
+              <p>Getting 50,000 real mainnet blocks turned out to be a project in itself. Attempt one: run a full mainnet node with <code>txindex=1</code> and <code>blockfilterindex=1</code>. It synced for days, then crashed with a LevelDB fatal error: <em>"No space left on device."</em> Turns out you need about 1.5 TB free. Attempt two: fall back to a public remote RPC endpoint. That failed instantly — the public node does not expose <code>getblockfilter</code>. Attempt three: retry in tx-only mode. That ran for hours, then died to a transient DNS resolution error. And because the extractor wrote output only on completion, no partial data was saved. The fix was a complete redesign: binary chunk streaming (250 blocks per <code>.bin</code> file), checkpoint writes, and retry logic.</p>
+
+              <h3>The 11 GB JSON problem</h3>
+              <p>Early benchmarks loaded block data from pretty-printed JSON. This was fine for testnet, but a 10k-block mainnet extraction produced an 11 GB JSON file. The C++ harness could stomach 500–1k blocks, but iterative benchmarking at 10k+ was impractical. This forced the move to the binary streaming architecture that the final benchmarks use — and in hindsight it was a blessing, because it also solved the memory problem for 50k-block runs.</p>
+
+              <h3>Fuse8 and Xor8: blazing fast, completely useless</h3>
+              <p>Both 8-bit filter variants were about 100x faster than GCS and 50% smaller. On paper, a dream. In practice, their 1/256 false-positive rate produced ~1,700 false positives over 20k blocks — roughly 2.6 GB of pointless full-block downloads. The bandwidth cost dwarfed the size savings. They were rejected in a single benchmark run.</p>
+
+              <h3>The benchmark that lied</h3>
+              <p>A subtle bug in the benchmark harness made hierarchical filters look better than they were. Expected-negative queries used early-exit timing, but a probabilistic filter can produce a false positive on the very first check, causing the timer to stop early and report an implausibly fast result. The bug only became visible at 50k blocks, where the statistical effect was large enough to notice. After switching negative queries to full-scan timing, the inflated speedup numbers came back down to earth. Lesson learned: benchmark semantics must match what a real client actually does.</p>
+
+              <h3>The bandwidth numbers that added up twice</h3>
+              <p>During the Fuse16+20 hierarchical benchmarks, the total bandwidth column looked suspiciously high. It turned out the C++ layer already included false-positive block downloads in its "total bandwidth" output, and then the shell script added them again in the summary table. A classic double-counting bug, caught only by staring at the numbers long enough to realize they could not possibly be right.</p>
+
+              <h3>The pivot</h3>
+              <p>After hierarchical GCS failed, the project pivoted to Binary Fuse16 as a flat replacement for GCS — and the very first benchmark showed a 77x speedup. The hierarchical idea was later revived, but this time built on Fuse filters instead of GCS, with domain-separated SipHash keys and a candidate-only optimization. That is where the research stands today: one clear winner (flat Fuse16) and one promising but unfinished direction (hierarchical Fuse).</p>
+            </div>
+          </details>
+        </section>
 
       <section id="about-author" class="author-panel">
         <img src="author.jpg" alt="Csaba Purszki" class="author-img">
