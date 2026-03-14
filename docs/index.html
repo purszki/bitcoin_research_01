@@ -493,8 +493,13 @@
                     <tr><th>File</th><th>Description</th></tr>
                   </thead>
                   <tbody>
+                    <tr><td><code>fuse8filter.h</code> / <code>.cpp</code></td><td>C++ wrapper for Binary Fuse8 filter (8-bit fingerprint, FPR 1/256 — rejected due to false positives)</td></tr>
+                    <tr><td><code>fuse10filter.h</code> / <code>.cpp</code></td><td>Experimental Binary Fuse10 filter wrapper used in hierarchical <code>F10+10</code> benchmarks</td></tr>
+                    <tr><td><code>fuse12filter.h</code> / <code>.cpp</code></td><td>Experimental Binary Fuse12 filter wrapper used for flat and hierarchical benchmarks</td></tr>
                     <tr><td><code>fuse16filter.h</code> / <code>.cpp</code></td><td>C++ wrapper for Binary Fuse16 filter (16-bit fingerprint, FPR 1/65,536)</td></tr>
-                    <tr><td><code>fuse8filter.h</code> / <code>.cpp</code></td><td>C++ wrapper for Binary Fuse8 filter (8-bit, FPR 1/256 — rejected)</td></tr>
+                    <tr><td><code>fuse18filter.h</code> / <code>.cpp</code></td><td>Experimental Binary Fuse18 filter wrapper used for flat and hierarchical benchmarks</td></tr>
+                    <tr><td><code>fuse20filter.h</code> / <code>.cpp</code></td><td>Experimental Binary Fuse20 filter wrapper used for flat and hierarchical benchmarks</td></tr>
+                    <tr><td><code>fuse32filter.h</code> / <code>.cpp</code></td><td>Experimental Binary Fuse32 filter wrapper used as a near-zero-FP validation reference</td></tr>
                     <tr><td><code>xor8filter.h</code> / <code>.cpp</code></td><td>C++ wrapper for Xor8 filter (8-bit, FPR 1/256 — rejected)</td></tr>
                   </tbody>
                 </table>
@@ -522,13 +527,13 @@
                     <tr><th>File</th><th>Description</th></tr>
                   </thead>
                   <tbody>
-                    <tr><td><code>research_bip158.cpp</code></td><td>All research benchmarks: client-side query timing (GCS, Fuse16, Fuse8, Xor8), streaming ground-truth validation</td></tr>
+                    <tr><td><code>research_bip158.cpp</code></td><td>Main benchmark driver: flat Fuse benchmarks, hierarchical Fuse benchmarks, and streaming ground-truth validation</td></tr>
                     <tr><td><code>filter_demo.cpp</code></td><td>Minimal demo: builds a Fuse16 filter for a single block and queries it</td></tr>
                   </tbody>
                 </table>
               </div>
 
-              <h3>Vendored C library (<code>src/bench/xor_singleheader/</code>)</h3>
+              <h3>Vendored Library and Experimental C++ Impl (<code>src/bench/xor_singleheader/</code>)</h3>
               <div class="table-wrap">
                 <table>
                   <thead>
@@ -536,7 +541,9 @@
                   </thead>
                   <tbody>
                     <tr><td><code>binaryfusefilter.h</code></td><td>Binary Fuse filter C implementation (from <a href="https://github.com/FastFilter/xor_singleheader">xor_singleheader</a>, commit <code>c482686</code>)</td></tr>
+                    <tr><td><code>binaryfusefilter.hpp</code></td><td>Experimental C++ refactor of Binary Fuse with template-based variable-width filters and explicit little-endian serialization</td></tr>
                     <tr><td><code>xorfilter.h</code></td><td>Xor filter C implementation (same upstream library)</td></tr>
+                    <tr><td><code>README.md</code></td><td>Local notes about the vendored <code>xor_singleheader</code> code and the in-repo adaptations</td></tr>
                   </tbody>
                 </table>
               </div>
@@ -692,7 +699,7 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
 
 # All wallets, flat and hierarchical filter matrix:
 ./light_client_research/benchmark_tools/wallet_benchmark.sh 50000</pre>
-          <p>The <code>wallet_benchmark.sh</code> script runs the current all-wallet comparison (GCS, flat Fuse variants, and hierarchical variants), computes actual false positives from ground-truth data, and saves summary tables to <code>light_client_research/results/wallet_benchmark_results_&lt;blocks&gt;.txt</code>.</p>
+          <p>The <code>wallet_benchmark.sh</code> script runs the current all-wallet comparison (GCS, flat Fuse variants, and hierarchical variants), computes actual false positives from ground-truth data, and saves summary tables to <code>light_client_research/results/wallet_benchmark_results_&lt;blocks&gt;.txt</code>. The checked-in 50k result file is here: <a href="https://github.com/purszki/bitcoin_research_01/blob/fuse_filter_research_docs/light_client_research/results/wallet_benchmark_results_50000.txt">wallet_benchmark_results_50000.txt</a>.</p>
           <p>To run both ground-truth validation and benchmarks in one go:</p>
           <pre>./light_client_research/benchmark_tools/bench_all.sh 50000</pre>
 
@@ -715,7 +722,7 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
           <p>8-bit filters are ~50% smaller and ~100x faster, but their FPR (1/256) causes thousands of unnecessary full block downloads (~2.6 GB for Fuse8 at 20k blocks). The bandwidth cost far exceeds the size savings.</p>
 
           <h3>Profiling Results: Flat Fuse Variants vs GCS (50k mainnet blocks, desktop)</h3>
-          <p>Using the current <code>wallet_benchmark_results_50000.txt</code> as ground truth, the checked-in flat-filter comparison covers GCS, Fuse16, Fuse18, and Fuse20.</p>
+          <p>Using the current <a href="https://github.com/purszki/bitcoin_research_01/blob/fuse_filter_research_docs/light_client_research/results/wallet_benchmark_results_50000.txt"><code>wallet_benchmark_results_50000.txt</code></a> as ground truth, the checked-in flat-filter comparison covers GCS, Fuse16, Fuse18, and Fuse20.</p>
           <p><strong>CPU speed</strong> (deserialize + MatchAny, lower is better):</p>
           <div class="table-wrap">
             <table>
@@ -764,7 +771,7 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
           </ul>
 
           <h3>Profiling Results: Experimental Hierarchical Fuse Variants vs GCS (50k mainnet blocks, desktop)</h3>
-          <p>Using the same checked-in <code>wallet_benchmark_results_50000.txt</code> file as ground truth, the experimental hierarchical comparison covers <code>F16+20</code>, <code>F10+10</code>, <code>F12+12</code>, <code>F12+16</code>, and <code>F12+18</code>. These schemes trade protocol simplicity for a different speed/bandwidth frontier.</p>
+          <p>Using the same checked-in <a href="https://github.com/purszki/bitcoin_research_01/blob/fuse_filter_research_docs/light_client_research/results/wallet_benchmark_results_50000.txt"><code>wallet_benchmark_results_50000.txt</code></a> file as ground truth, the experimental hierarchical comparison covers <code>F16+20</code>, <code>F10+10</code>, <code>F12+12</code>, <code>F12+16</code>, and <code>F12+18</code>. These schemes trade protocol simplicity for a different speed/bandwidth frontier.</p>
           <p><strong>CPU speed</strong> (deserialize + MatchAny, including inner-filter verification when triggered; lower is better):</p>
           <div class="table-wrap">
             <table>
@@ -957,8 +964,18 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
 
   <script>
     const sourceFileMap = {
+      'fuse10filter.h': 'src/bench/light_client_research/fuse10filter.h',
+      'fuse10filter.cpp': 'src/bench/light_client_research/fuse10filter.cpp',
+      'fuse12filter.h': 'src/bench/light_client_research/fuse12filter.h',
+      'fuse12filter.cpp': 'src/bench/light_client_research/fuse12filter.cpp',
       'fuse16filter.h': 'src/bench/light_client_research/fuse16filter.h',
       'fuse16filter.cpp': 'src/bench/light_client_research/fuse16filter.cpp',
+      'fuse18filter.h': 'src/bench/light_client_research/fuse18filter.h',
+      'fuse18filter.cpp': 'src/bench/light_client_research/fuse18filter.cpp',
+      'fuse20filter.h': 'src/bench/light_client_research/fuse20filter.h',
+      'fuse20filter.cpp': 'src/bench/light_client_research/fuse20filter.cpp',
+      'fuse32filter.h': 'src/bench/light_client_research/fuse32filter.h',
+      'fuse32filter.cpp': 'src/bench/light_client_research/fuse32filter.cpp',
       'fuse8filter.h': 'src/bench/light_client_research/fuse8filter.h',
       'fuse8filter.cpp': 'src/bench/light_client_research/fuse8filter.cpp',
       'xor8filter.h': 'src/bench/light_client_research/xor8filter.h',
@@ -974,7 +991,9 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
       'research_bip158.cpp': 'src/bench/light_client_research/research_bip158.cpp',
       'filter_demo.cpp': 'src/bench/light_client_research/filter_demo.cpp',
       'binaryfusefilter.h': 'src/bench/xor_singleheader/binaryfusefilter.h',
-      'xorfilter.h': 'src/bench/xor_singleheader/xorfilter.h'
+      'binaryfusefilter.hpp': 'src/bench/xor_singleheader/binaryfusefilter.hpp',
+      'xorfilter.h': 'src/bench/xor_singleheader/xorfilter.h',
+      'README.md': 'src/bench/xor_singleheader/README.md'
     };
 
     const sourceRepoBase = 'https://github.com/purszki/bitcoin_research_01/blob/fuse_filter_research/';
