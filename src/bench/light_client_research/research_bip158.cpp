@@ -1701,6 +1701,11 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
     const fs::path bin_dir = GetEnvPath("HIER_BIN_DIR", DEFAULT_BIN_STREAM_DIR);
     const fs::path wallet_dir = GetEnvPath("BIN_WALLET_DIR", DEFAULT_WALLET_DIR);
     const std::size_t scan_max_blocks = GetEnvSizeT("BIN_SCAN_MAX_BLOCKS", 1000);
+    const bool stream_only = GetEnvSizeT("BIN_STREAM_ONLY", 0) != 0;
+
+    if (stream_only) {
+        std::cout << "[AllFilters] STREAM-ONLY mode: skipping nanobench timing loops (low-memory)\n";
+    }
 
     // Load all wallet scenarios.
     std::cout << "[AllFilters] Loading wallets from " << fs::PathToString(wallet_dir) << std::endl;
@@ -1727,11 +1732,11 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
     const auto chunk_metas = FilterBench::LoadBinChunkMetas(bin_dir);
 
     std::vector<UnifiedBlockData> blocks;
-    if (scan_max_blocks > 0) blocks.reserve(scan_max_blocks);
+    if (!stream_only && scan_max_blocks > 0) blocks.reserve(scan_max_blocks);
 
     std::vector<WalletRunningStats> wallet_stats(wallets.size());
 
-    std::size_t skipped_small{0}, construction_failures{0};
+    std::size_t skipped_small{0}, construction_failures{0}, processed_blocks{0};
     std::size_t gcs_bytes{0}, f16_bytes{0}, f12_bytes{0}, f10_bytes{0}, f18_flat_bytes{0}, f20_flat_bytes{0};
     std::size_t f8_bytes{0}, gcsi_bytes{0};
     std::size_t f10i_bytes{0}, f12i_bytes{0}, f16i_bytes{0}, f18_bytes{0}, f20_bytes{0};
@@ -2091,20 +2096,23 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
 
             }
 
-            blocks.push_back(UnifiedBlockData{
-                cur_index, bsz,
-                gcs_params, std::move(gcs_enc),
-                k0, k1,
-                std::move(f16_s), std::move(f12_s), std::move(f10_s),
-                std::move(f18_flat_s), std::move(f20_flat_s),
-                std::move(f8_s),
-                f10i_k0, f10i_k1, std::move(f10i_s),
-                f12i_k0, f12i_k1, std::move(f12i_s),
-                f16i_k0, f16i_k1, std::move(f16i_s),
-                f18_k0, f18_k1, std::move(f18_s),
-                f20_k0, f20_k1, std::move(f20_s),
-                gcsi_params, std::move(gcsi_enc),
-            });
+            if (!stream_only) {
+                blocks.push_back(UnifiedBlockData{
+                    cur_index, bsz,
+                    gcs_params, std::move(gcs_enc),
+                    k0, k1,
+                    std::move(f16_s), std::move(f12_s), std::move(f10_s),
+                    std::move(f18_flat_s), std::move(f20_flat_s),
+                    std::move(f8_s),
+                    f10i_k0, f10i_k1, std::move(f10i_s),
+                    f12i_k0, f12i_k1, std::move(f12i_s),
+                    f16i_k0, f16i_k1, std::move(f16i_s),
+                    f18_k0, f18_k1, std::move(f18_s),
+                    f20_k0, f20_k1, std::move(f20_s),
+                    gcsi_params, std::move(gcsi_enc),
+                });
+            }
+            ++processed_blocks;
         } catch (...) { ++construction_failures; }
 
         // Progress dot.
@@ -2117,7 +2125,7 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
         }
 
         // Periodic intermediate report.
-        if (blocks.size() >= next_report) {
+        if (processed_blocks >= next_report) {
             const double g_mb = static_cast<double>(gcs_bytes) / (1024.0 * 1024.0);
             const double f16_mb_now = static_cast<double>(f16_bytes) / (1024.0 * 1024.0);
             const double f18_flat_mb_now = static_cast<double>(f18_flat_bytes) / (1024.0 * 1024.0);
@@ -2125,7 +2133,7 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
             const double f12_mb_now = static_cast<double>(f12_bytes) / (1024.0 * 1024.0);
             const double f10_mb_now = static_cast<double>(f10_bytes) / (1024.0 * 1024.0);
             const double f8_mb_now = static_cast<double>(f8_bytes) / (1024.0 * 1024.0);
-            PrintProgressReport(blocks.size(), wallets, short_names, wallet_stats,
+            PrintProgressReport(processed_blocks, wallets, short_names, wallet_stats,
                                 g_mb, f16_mb_now, f18_flat_mb_now, f20_flat_mb_now, f12_mb_now, f10_mb_now, f8_mb_now);
             std::snprintf(line_hdr, sizeof(line_hdr), "%6zu ", total_block_index);
             std::cout << line_hdr << std::flush;
@@ -2136,7 +2144,7 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
 
     std::cout << "\n"; // End progress line.
 
-    if (blocks.empty()) {
+    if (processed_blocks == 0) {
         throw std::runtime_error("[AllFilters] no blocks loaded from bin stream");
     }
 
@@ -2146,7 +2154,7 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
     const double f20_flat_mb = static_cast<double>(f20_flat_bytes) / (1024.0 * 1024.0);
     const double f12_mb = static_cast<double>(f12_bytes) / (1024.0 * 1024.0);
 
-    std::cout << "[AllFilters] " << blocks.size() << " blocks"
+    std::cout << "[AllFilters] " << processed_blocks << " blocks"
               << " (skipped " << skipped_small << " small, " << construction_failures << " failed)"
               << ", GCS=" << gcs_mb << " MB, F16=" << f16_mb << " MB"
               << ", F18=" << f18_flat_mb << " MB, F20=" << f20_flat_mb << " MB"
@@ -2171,89 +2179,105 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
         // --- GCS ---
         {
             const double block_dl_mb = static_cast<double>(ws.gcs_block_dl_bytes) / (1024.0 * 1024.0);
+            const double cpu_ms = static_cast<double>(ws.gcs_ns) / 1e6;
             std::cout << "[AllFilters] wallet=" << short_name
                       << " scripts=" << n_scripts
                       << " filter=GCS filter_mb=" << gcs_mb
                       << " matches=" << ws.gcs_matches
                       << " ground_truth=" << gt_count
                       << " block_download=" << block_dl_mb
+                      << " cpu_ms=" << cpu_ms
                       << std::endl;
 
-            bench.name("GCS/" + short_name);
-            bench.run([&] {
-                std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    const GCSFilter f(b.gcs_params, b.gcs_encoded, true);
-                    if (f.MatchAny(scripts)) ++mc;
-                }
-                ankerl::nanobench::doNotOptimizeAway(mc);
-            });
+            if (!stream_only) {
+                bench.name("GCS/" + short_name);
+                bench.run([&] {
+                    std::size_t mc{0};
+                    for (const UnifiedBlockData& b : blocks) {
+                        const GCSFilter f(b.gcs_params, b.gcs_encoded, true);
+                        if (f.MatchAny(scripts)) ++mc;
+                    }
+                    ankerl::nanobench::doNotOptimizeAway(mc);
+                });
+            }
         }
 
         // --- F16 ---
         {
             const double block_dl_mb = static_cast<double>(ws.f16_block_dl_bytes) / (1024.0 * 1024.0);
+            const double cpu_ms = static_cast<double>(ws.f16_ns) / 1e6;
             std::cout << "[AllFilters] wallet=" << short_name
                       << " scripts=" << n_scripts
                       << " filter=F16 filter_mb=" << f16_mb
                       << " matches=" << ws.f16_matches
                       << " ground_truth=" << gt_count
                       << " block_download=" << block_dl_mb
+                      << " cpu_ms=" << cpu_ms
                       << std::endl;
 
-            bench.name("F16/" + short_name);
-            bench.run([&] {
-                std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    Fuse16Filter f = Fuse16Filter::Deserialize(b.k0, b.k1, b.f16_ser);
-                    if (f.MatchAny(scripts)) ++mc;
-                }
-                ankerl::nanobench::doNotOptimizeAway(mc);
-            });
+            if (!stream_only) {
+                bench.name("F16/" + short_name);
+                bench.run([&] {
+                    std::size_t mc{0};
+                    for (const UnifiedBlockData& b : blocks) {
+                        Fuse16Filter f = Fuse16Filter::Deserialize(b.k0, b.k1, b.f16_ser);
+                        if (f.MatchAny(scripts)) ++mc;
+                    }
+                    ankerl::nanobench::doNotOptimizeAway(mc);
+                });
+            }
         }
 
         // --- F18 standalone ---
         {
             const double block_dl_mb = static_cast<double>(ws.f18_block_dl_bytes) / (1024.0 * 1024.0);
+            const double cpu_ms = static_cast<double>(ws.f18_ns) / 1e6;
             std::cout << "[AllFilters] wallet=" << short_name
                       << " scripts=" << n_scripts
                       << " filter=F18 filter_mb=" << f18_flat_mb
                       << " matches=" << ws.f18_matches
                       << " ground_truth=" << gt_count
                       << " block_download=" << block_dl_mb
+                      << " cpu_ms=" << cpu_ms
                       << std::endl;
 
-            bench.name("F18/" + short_name);
-            bench.run([&] {
-                std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    Fuse18Filter f = Fuse18Filter::Deserialize(b.k0, b.k1, b.f18_flat_ser);
-                    if (f.MatchAny(scripts)) ++mc;
-                }
-                ankerl::nanobench::doNotOptimizeAway(mc);
-            });
+            if (!stream_only) {
+                bench.name("F18/" + short_name);
+                bench.run([&] {
+                    std::size_t mc{0};
+                    for (const UnifiedBlockData& b : blocks) {
+                        Fuse18Filter f = Fuse18Filter::Deserialize(b.k0, b.k1, b.f18_flat_ser);
+                        if (f.MatchAny(scripts)) ++mc;
+                    }
+                    ankerl::nanobench::doNotOptimizeAway(mc);
+                });
+            }
         }
 
         // --- F20 standalone ---
         {
             const double block_dl_mb = static_cast<double>(ws.f20_block_dl_bytes) / (1024.0 * 1024.0);
+            const double cpu_ms = static_cast<double>(ws.f20_ns) / 1e6;
             std::cout << "[AllFilters] wallet=" << short_name
                       << " scripts=" << n_scripts
                       << " filter=F20 filter_mb=" << f20_flat_mb
                       << " matches=" << ws.f20_matches
                       << " ground_truth=" << gt_count
                       << " block_download=" << block_dl_mb
+                      << " cpu_ms=" << cpu_ms
                       << std::endl;
 
-            bench.name("F20/" + short_name);
-            bench.run([&] {
-                std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    Fuse20Filter f = Fuse20Filter::Deserialize(b.k0, b.k1, b.f20_flat_ser);
-                    if (f.MatchAny(scripts)) ++mc;
-                }
-                ankerl::nanobench::doNotOptimizeAway(mc);
-            });
+            if (!stream_only) {
+                bench.name("F20/" + short_name);
+                bench.run([&] {
+                    std::size_t mc{0};
+                    for (const UnifiedBlockData& b : blocks) {
+                        Fuse20Filter f = Fuse20Filter::Deserialize(b.k0, b.k1, b.f20_flat_ser);
+                        if (f.MatchAny(scripts)) ++mc;
+                    }
+                    ankerl::nanobench::doNotOptimizeAway(mc);
+                });
+            }
         }
 
         // --- F16+20 hierarchical ---
@@ -2261,6 +2285,7 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
             const double f20_bw_mb = static_cast<double>(ws.f1620_f20_bw) / (1024.0 * 1024.0);
             const double total_filt_mb = f16_mb + f20_bw_mb;
             const double block_dl_mb = static_cast<double>(ws.f1620_block_dl_bytes) / (1024.0 * 1024.0);
+            const double cpu_ms = static_cast<double>(ws.f1620_ns) / 1e6;
             std::cout << "[AllFilters] wallet=" << short_name
                       << " scripts=" << n_scripts
                       << " filter=F16+20 total_filter=" << total_filt_mb
@@ -2269,25 +2294,28 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                       << " f16_block_matches=" << ws.f1620_f16_hits
                       << " eliminated=" << (ws.f1620_f16_hits - ws.f1620_matches)
                       << " block_download=" << block_dl_mb
+                      << " cpu_ms=" << cpu_ms
                       << std::endl;
 
-            bench.name("F16+20/" + short_name);
-            bench.run([&] {
-                std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    Fuse16Filter f16 = Fuse16Filter::Deserialize(b.k0, b.k1, b.f16_ser);
-                    std::vector<Fuse16Filter::Element> cands;
-                    for (const auto& s : scripts) {
-                        if (f16.Match(s)) cands.push_back(s);
+            if (!stream_only) {
+                bench.name("F16+20/" + short_name);
+                bench.run([&] {
+                    std::size_t mc{0};
+                    for (const UnifiedBlockData& b : blocks) {
+                        Fuse16Filter f16 = Fuse16Filter::Deserialize(b.k0, b.k1, b.f16_ser);
+                        std::vector<Fuse16Filter::Element> cands;
+                        for (const auto& s : scripts) {
+                            if (f16.Match(s)) cands.push_back(s);
+                        }
+                        if (cands.empty()) continue;
+                        Fuse20Filter f20 = Fuse20Filter::Deserialize(b.f20_k0, b.f20_k1, b.f20_ser);
+                        for (const auto& c : cands) {
+                            if (f20.Match(c)) { ++mc; break; }
+                        }
                     }
-                    if (cands.empty()) continue;
-                    Fuse20Filter f20 = Fuse20Filter::Deserialize(b.f20_k0, b.f20_k1, b.f20_ser);
-                    for (const auto& c : cands) {
-                        if (f20.Match(c)) { ++mc; break; }
-                    }
-                }
-                ankerl::nanobench::doNotOptimizeAway(mc);
-            });
+                    ankerl::nanobench::doNotOptimizeAway(mc);
+                });
+            }
         }
 
         // --- F10+10 hierarchical ---
@@ -2296,6 +2324,7 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
             const double f10i_bw_mb = static_cast<double>(ws.f1010_f10i_bw) / (1024.0 * 1024.0);
             const double total_filt_mb = f10_mb + f10i_bw_mb;
             const double block_dl_mb = static_cast<double>(ws.f1010_block_dl_bytes) / (1024.0 * 1024.0);
+            const double cpu_ms = static_cast<double>(ws.f1010_ns) / 1e6;
             std::cout << "[AllFilters] wallet=" << short_name
                       << " scripts=" << n_scripts
                       << " filter=F10+10 total_filter=" << total_filt_mb
@@ -2304,25 +2333,28 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                       << " f10_block_matches=" << ws.f1010_f10_hits
                       << " eliminated=" << (ws.f1010_f10_hits - ws.f1010_matches)
                       << " block_download=" << block_dl_mb
+                      << " cpu_ms=" << cpu_ms
                       << std::endl;
 
-            bench.name("F10+10/" + short_name);
-            bench.run([&] {
-                std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    Fuse10Filter f10 = Fuse10Filter::Deserialize(b.k0, b.k1, b.f10_ser);
-                    std::vector<Fuse10Filter::Element> cands;
-                    for (const auto& s : scripts) {
-                        if (f10.Match(s)) cands.push_back(s);
+            if (!stream_only) {
+                bench.name("F10+10/" + short_name);
+                bench.run([&] {
+                    std::size_t mc{0};
+                    for (const UnifiedBlockData& b : blocks) {
+                        Fuse10Filter f10 = Fuse10Filter::Deserialize(b.k0, b.k1, b.f10_ser);
+                        std::vector<Fuse10Filter::Element> cands;
+                        for (const auto& s : scripts) {
+                            if (f10.Match(s)) cands.push_back(s);
+                        }
+                        if (cands.empty()) continue;
+                        Fuse10Filter f10i = Fuse10Filter::Deserialize(b.f10i_k0, b.f10i_k1, b.f10i_ser);
+                        for (const auto& c : cands) {
+                            if (f10i.Match(c)) { ++mc; break; }
+                        }
                     }
-                    if (cands.empty()) continue;
-                    Fuse10Filter f10i = Fuse10Filter::Deserialize(b.f10i_k0, b.f10i_k1, b.f10i_ser);
-                    for (const auto& c : cands) {
-                        if (f10i.Match(c)) { ++mc; break; }
-                    }
-                }
-                ankerl::nanobench::doNotOptimizeAway(mc);
-            });
+                    ankerl::nanobench::doNotOptimizeAway(mc);
+                });
+            }
         }
 
         // --- F12+12 hierarchical ---
@@ -2330,6 +2362,7 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
             const double f12i_bw_mb = static_cast<double>(ws.f1212_f12i_bw) / (1024.0 * 1024.0);
             const double total_filt_mb = f12_mb + f12i_bw_mb;
             const double block_dl_mb = static_cast<double>(ws.f1212_block_dl_bytes) / (1024.0 * 1024.0);
+            const double cpu_ms = static_cast<double>(ws.f1212_ns) / 1e6;
             std::cout << "[AllFilters] wallet=" << short_name
                       << " scripts=" << n_scripts
                       << " filter=F12+12 total_filter=" << total_filt_mb
@@ -2338,25 +2371,28 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                       << " f12_block_matches=" << ws.f1212_f12_hits
                       << " eliminated=" << (ws.f1212_f12_hits - ws.f1212_matches)
                       << " block_download=" << block_dl_mb
+                      << " cpu_ms=" << cpu_ms
                       << std::endl;
 
-            bench.name("F12+12/" + short_name);
-            bench.run([&] {
-                std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    Fuse12Filter f12 = Fuse12Filter::Deserialize(b.k0, b.k1, b.f12_ser);
-                    std::vector<Fuse12Filter::Element> cands;
-                    for (const auto& s : scripts) {
-                        if (f12.Match(s)) cands.push_back(s);
+            if (!stream_only) {
+                bench.name("F12+12/" + short_name);
+                bench.run([&] {
+                    std::size_t mc{0};
+                    for (const UnifiedBlockData& b : blocks) {
+                        Fuse12Filter f12 = Fuse12Filter::Deserialize(b.k0, b.k1, b.f12_ser);
+                        std::vector<Fuse12Filter::Element> cands;
+                        for (const auto& s : scripts) {
+                            if (f12.Match(s)) cands.push_back(s);
+                        }
+                        if (cands.empty()) continue;
+                        Fuse12Filter f12i = Fuse12Filter::Deserialize(b.f12i_k0, b.f12i_k1, b.f12i_ser);
+                        for (const auto& c : cands) {
+                            if (f12i.Match(c)) { ++mc; break; }
+                        }
                     }
-                    if (cands.empty()) continue;
-                    Fuse12Filter f12i = Fuse12Filter::Deserialize(b.f12i_k0, b.f12i_k1, b.f12i_ser);
-                    for (const auto& c : cands) {
-                        if (f12i.Match(c)) { ++mc; break; }
-                    }
-                }
-                ankerl::nanobench::doNotOptimizeAway(mc);
-            });
+                    ankerl::nanobench::doNotOptimizeAway(mc);
+                });
+            }
         }
 
         // --- F12+16 hierarchical ---
@@ -2364,6 +2400,7 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
             const double f16_bw_mb = static_cast<double>(ws.f1216_f16_bw) / (1024.0 * 1024.0);
             const double total_filt_mb = f12_mb + f16_bw_mb;
             const double block_dl_mb = static_cast<double>(ws.f1216_block_dl_bytes) / (1024.0 * 1024.0);
+            const double cpu_ms = static_cast<double>(ws.f1216_ns) / 1e6;
             std::cout << "[AllFilters] wallet=" << short_name
                       << " scripts=" << n_scripts
                       << " filter=F12+16 total_filter=" << total_filt_mb
@@ -2372,25 +2409,28 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                       << " f12_block_matches=" << ws.f1216_f12_hits
                       << " eliminated=" << (ws.f1216_f12_hits - ws.f1216_matches)
                       << " block_download=" << block_dl_mb
+                      << " cpu_ms=" << cpu_ms
                       << std::endl;
 
-            bench.name("F12+16/" + short_name);
-            bench.run([&] {
-                std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    Fuse12Filter f12 = Fuse12Filter::Deserialize(b.k0, b.k1, b.f12_ser);
-                    std::vector<Fuse12Filter::Element> cands;
-                    for (const auto& s : scripts) {
-                        if (f12.Match(s)) cands.push_back(s);
+            if (!stream_only) {
+                bench.name("F12+16/" + short_name);
+                bench.run([&] {
+                    std::size_t mc{0};
+                    for (const UnifiedBlockData& b : blocks) {
+                        Fuse12Filter f12 = Fuse12Filter::Deserialize(b.k0, b.k1, b.f12_ser);
+                        std::vector<Fuse12Filter::Element> cands;
+                        for (const auto& s : scripts) {
+                            if (f12.Match(s)) cands.push_back(s);
+                        }
+                        if (cands.empty()) continue;
+                        Fuse16Filter f16i = Fuse16Filter::Deserialize(b.f16i_k0, b.f16i_k1, b.f16i_ser);
+                        for (const auto& c : cands) {
+                            if (f16i.Match(c)) { ++mc; break; }
+                        }
                     }
-                    if (cands.empty()) continue;
-                    Fuse16Filter f16i = Fuse16Filter::Deserialize(b.f16i_k0, b.f16i_k1, b.f16i_ser);
-                    for (const auto& c : cands) {
-                        if (f16i.Match(c)) { ++mc; break; }
-                    }
-                }
-                ankerl::nanobench::doNotOptimizeAway(mc);
-            });
+                    ankerl::nanobench::doNotOptimizeAway(mc);
+                });
+            }
         }
 
         // --- F12+18 hierarchical ---
@@ -2398,6 +2438,7 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
             const double f18_bw_mb = static_cast<double>(ws.f1218_f18_bw) / (1024.0 * 1024.0);
             const double total_filt_mb = f12_mb + f18_bw_mb;
             const double block_dl_mb = static_cast<double>(ws.f1218_block_dl_bytes) / (1024.0 * 1024.0);
+            const double cpu_ms = static_cast<double>(ws.f1218_ns) / 1e6;
             std::cout << "[AllFilters] wallet=" << short_name
                       << " scripts=" << n_scripts
                       << " filter=F12+18 total_filter=" << total_filt_mb
@@ -2406,25 +2447,28 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                       << " f12_block_matches=" << ws.f1218_f12_hits
                       << " eliminated=" << (ws.f1218_f12_hits - ws.f1218_matches)
                       << " block_download=" << block_dl_mb
+                      << " cpu_ms=" << cpu_ms
                       << std::endl;
 
-            bench.name("F12+18/" + short_name);
-            bench.run([&] {
-                std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    Fuse12Filter f12 = Fuse12Filter::Deserialize(b.k0, b.k1, b.f12_ser);
-                    std::vector<Fuse12Filter::Element> cands;
-                    for (const auto& s : scripts) {
-                        if (f12.Match(s)) cands.push_back(s);
+            if (!stream_only) {
+                bench.name("F12+18/" + short_name);
+                bench.run([&] {
+                    std::size_t mc{0};
+                    for (const UnifiedBlockData& b : blocks) {
+                        Fuse12Filter f12 = Fuse12Filter::Deserialize(b.k0, b.k1, b.f12_ser);
+                        std::vector<Fuse12Filter::Element> cands;
+                        for (const auto& s : scripts) {
+                            if (f12.Match(s)) cands.push_back(s);
+                        }
+                        if (cands.empty()) continue;
+                        Fuse18Filter f18 = Fuse18Filter::Deserialize(b.f18_k0, b.f18_k1, b.f18_ser);
+                        for (const auto& c : cands) {
+                            if (f18.Match(c)) { ++mc; break; }
+                        }
                     }
-                    if (cands.empty()) continue;
-                    Fuse18Filter f18 = Fuse18Filter::Deserialize(b.f18_k0, b.f18_k1, b.f18_ser);
-                    for (const auto& c : cands) {
-                        if (f18.Match(c)) { ++mc; break; }
-                    }
-                }
-                ankerl::nanobench::doNotOptimizeAway(mc);
-            });
+                    ankerl::nanobench::doNotOptimizeAway(mc);
+                });
+            }
         }
 
         // --- F8+GCS hierarchical ---
@@ -2433,6 +2477,7 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
             const double gcsi_bw_mb = static_cast<double>(ws.f8gcs_gcsi_bw) / (1024.0 * 1024.0);
             const double total_filt_mb = f8_mb + gcsi_bw_mb;
             const double block_dl_mb = static_cast<double>(ws.f8gcs_block_dl_bytes) / (1024.0 * 1024.0);
+            const double cpu_ms = static_cast<double>(ws.f8gcs_ns) / 1e6;
             std::cout << "[AllFilters] wallet=" << short_name
                       << " scripts=" << n_scripts
                       << " filter=F8+GCS total_filter=" << total_filt_mb
@@ -2441,25 +2486,28 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                       << " f8_block_matches=" << ws.f8gcs_f8_hits
                       << " eliminated=" << (ws.f8gcs_f8_hits - ws.f8gcs_matches)
                       << " block_download=" << block_dl_mb
+                      << " cpu_ms=" << cpu_ms
                       << std::endl;
 
-            bench.name("F8+GCS/" + short_name);
-            bench.run([&] {
-                std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    Fuse8Filter f8 = Fuse8Filter::Deserialize(b.k0, b.k1, b.f8_ser);
-                    std::vector<Fuse8Filter::Element> cands;
-                    for (const auto& s : scripts) {
-                        if (f8.Match(s)) cands.push_back(s);
+            if (!stream_only) {
+                bench.name("F8+GCS/" + short_name);
+                bench.run([&] {
+                    std::size_t mc{0};
+                    for (const UnifiedBlockData& b : blocks) {
+                        Fuse8Filter f8 = Fuse8Filter::Deserialize(b.k0, b.k1, b.f8_ser);
+                        std::vector<Fuse8Filter::Element> cands;
+                        for (const auto& s : scripts) {
+                            if (f8.Match(s)) cands.push_back(s);
+                        }
+                        if (cands.empty()) continue;
+                        const GCSFilter gcsi(b.gcsi_params, b.gcsi_encoded, true);
+                        for (const auto& c : cands) {
+                            if (gcsi.Match(c)) { ++mc; break; }
+                        }
                     }
-                    if (cands.empty()) continue;
-                    const GCSFilter gcsi(b.gcsi_params, b.gcsi_encoded, true);
-                    for (const auto& c : cands) {
-                        if (gcsi.Match(c)) { ++mc; break; }
-                    }
-                }
-                ankerl::nanobench::doNotOptimizeAway(mc);
-            });
+                    ankerl::nanobench::doNotOptimizeAway(mc);
+                });
+            }
         }
 
         // --- F12+GCS hierarchical ---
@@ -2467,6 +2515,7 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
             const double gcsi_bw_mb = static_cast<double>(ws.f12gcs_gcsi_bw) / (1024.0 * 1024.0);
             const double total_filt_mb = f12_mb + gcsi_bw_mb;
             const double block_dl_mb = static_cast<double>(ws.f12gcs_block_dl_bytes) / (1024.0 * 1024.0);
+            const double cpu_ms = static_cast<double>(ws.f12gcs_ns) / 1e6;
             std::cout << "[AllFilters] wallet=" << short_name
                       << " scripts=" << n_scripts
                       << " filter=F12+GCS total_filter=" << total_filt_mb
@@ -2475,25 +2524,28 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                       << " f12_block_matches=" << ws.f12gcs_f12_hits
                       << " eliminated=" << (ws.f12gcs_f12_hits - ws.f12gcs_matches)
                       << " block_download=" << block_dl_mb
+                      << " cpu_ms=" << cpu_ms
                       << std::endl;
 
-            bench.name("F12+GCS/" + short_name);
-            bench.run([&] {
-                std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    Fuse12Filter f12 = Fuse12Filter::Deserialize(b.k0, b.k1, b.f12_ser);
-                    std::vector<Fuse12Filter::Element> cands;
-                    for (const auto& s : scripts) {
-                        if (f12.Match(s)) cands.push_back(s);
+            if (!stream_only) {
+                bench.name("F12+GCS/" + short_name);
+                bench.run([&] {
+                    std::size_t mc{0};
+                    for (const UnifiedBlockData& b : blocks) {
+                        Fuse12Filter f12 = Fuse12Filter::Deserialize(b.k0, b.k1, b.f12_ser);
+                        std::vector<Fuse12Filter::Element> cands;
+                        for (const auto& s : scripts) {
+                            if (f12.Match(s)) cands.push_back(s);
+                        }
+                        if (cands.empty()) continue;
+                        const GCSFilter gcsi(b.gcsi_params, b.gcsi_encoded, true);
+                        for (const auto& c : cands) {
+                            if (gcsi.Match(c)) { ++mc; break; }
+                        }
                     }
-                    if (cands.empty()) continue;
-                    const GCSFilter gcsi(b.gcsi_params, b.gcsi_encoded, true);
-                    for (const auto& c : cands) {
-                        if (gcsi.Match(c)) { ++mc; break; }
-                    }
-                }
-                ankerl::nanobench::doNotOptimizeAway(mc);
-            });
+                    ankerl::nanobench::doNotOptimizeAway(mc);
+                });
+            }
         }
 
         // --- F16+GCS hierarchical ---
@@ -2501,6 +2553,7 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
             const double gcsi_bw_mb = static_cast<double>(ws.f16gcs_gcsi_bw) / (1024.0 * 1024.0);
             const double total_filt_mb = f16_mb + gcsi_bw_mb;
             const double block_dl_mb = static_cast<double>(ws.f16gcs_block_dl_bytes) / (1024.0 * 1024.0);
+            const double cpu_ms = static_cast<double>(ws.f16gcs_ns) / 1e6;
             std::cout << "[AllFilters] wallet=" << short_name
                       << " scripts=" << n_scripts
                       << " filter=F16+GCS total_filter=" << total_filt_mb
@@ -2509,25 +2562,28 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                       << " f16_block_matches=" << ws.f16gcs_f16_hits
                       << " eliminated=" << (ws.f16gcs_f16_hits - ws.f16gcs_matches)
                       << " block_download=" << block_dl_mb
+                      << " cpu_ms=" << cpu_ms
                       << std::endl;
 
-            bench.name("F16+GCS/" + short_name);
-            bench.run([&] {
-                std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    Fuse16Filter f16 = Fuse16Filter::Deserialize(b.k0, b.k1, b.f16_ser);
-                    std::vector<Fuse16Filter::Element> cands;
-                    for (const auto& s : scripts) {
-                        if (f16.Match(s)) cands.push_back(s);
+            if (!stream_only) {
+                bench.name("F16+GCS/" + short_name);
+                bench.run([&] {
+                    std::size_t mc{0};
+                    for (const UnifiedBlockData& b : blocks) {
+                        Fuse16Filter f16 = Fuse16Filter::Deserialize(b.k0, b.k1, b.f16_ser);
+                        std::vector<Fuse16Filter::Element> cands;
+                        for (const auto& s : scripts) {
+                            if (f16.Match(s)) cands.push_back(s);
+                        }
+                        if (cands.empty()) continue;
+                        const GCSFilter gcsi(b.gcsi_params, b.gcsi_encoded, true);
+                        for (const auto& c : cands) {
+                            if (gcsi.Match(c)) { ++mc; break; }
+                        }
                     }
-                    if (cands.empty()) continue;
-                    const GCSFilter gcsi(b.gcsi_params, b.gcsi_encoded, true);
-                    for (const auto& c : cands) {
-                        if (gcsi.Match(c)) { ++mc; break; }
-                    }
-                }
-                ankerl::nanobench::doNotOptimizeAway(mc);
-            });
+                    ankerl::nanobench::doNotOptimizeAway(mc);
+                });
+            }
         }
     }
 }

@@ -8,13 +8,18 @@
 
 set -euo pipefail
 
-if [ $# -ne 1 ]; then
-    echo "Usage: $0 <max_blocks>"
+if [ $# -lt 1 ]; then
+    echo "Usage: $0 <max_blocks> [--stream-only]"
     echo "  e.g.: $0 50000"
+    echo "  e.g.: $0 50000 --stream-only   # low-memory mode, skips nanobench"
     exit 1
 fi
 
 MAX_BLOCKS="$1"
+STREAM_ONLY=0
+if [ "${2:-}" = "--stream-only" ]; then
+    STREAM_ONLY=1
+fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BENCH_BIN="$REPO_ROOT/build-release/bin/bench_bitcoin"
@@ -43,6 +48,7 @@ echo "Running unified benchmark for $MAX_BLOCKS blocks (single I/O pass)..."
 
 BIN_SCAN_MAX_BLOCKS="$MAX_BLOCKS" \
 BIN_WALLET_DIR="$WALLET_DIR" \
+BIN_STREAM_ONLY="$STREAM_ONLY" \
     "$BENCH_BIN" \
     -filter="ResearchAllFiltersAllWallets" -min-time=1000 \
     2>&1 | tee "$RAW_OUTPUT"
@@ -51,12 +57,23 @@ echo ""
 echo "Benchmark complete. Parsing results..."
 
 # Extract timing (ns) from nanobench markdown table, convert to ms.
+# Falls back to cpu_ms from [AllFilters] lines when nanobench data is absent (stream-only mode).
 parse_ns_to_ms() {
     local file="$1" bench_name="$2"
     local ns
     ns=$(grep "\`${bench_name}\`" "$file" | head -1 | awk -F'|' '{print $2}' | tr -d ' ,')
     if [ -n "$ns" ]; then
         python3 -c "print(f'{float(\"$ns\") / 1_000_000:.1f}')"
+        return
+    fi
+    # Fallback: parse cpu_ms from [AllFilters] lines. bench_name is "FILTER/wallet".
+    local filter="${bench_name%%/*}"
+    local wallet="${bench_name#*/}"
+    local cpu_ms
+    cpu_ms=$(grep "\[AllFilters\] wallet=${wallet} " "$file" | grep " filter=${filter} " | tail -1 \
+        | grep -oP 'cpu_ms=\K[\d.e+-]+' | head -1) || true
+    if [ -n "$cpu_ms" ]; then
+        python3 -c "print(f'{float(\"$cpu_ms\"):.1f}')"
     else
         echo ""
     fi
