@@ -20,6 +20,7 @@
 #include <bench/light_client_research/tx_block_stream_reader.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -42,6 +43,10 @@ static const fs::path DEFAULT_BIN_WALLET_SCENARIO =
     fs::PathFromString("light_client_research/mainnet_datasets/wallet_use_cases/wallet_use_case_simple_user.json");
 static const fs::path DEFAULT_WALLET_DIR =
     fs::PathFromString("light_client_research/mainnet_datasets/wallet_use_cases");
+
+// ============================================================================
+// Environment helpers
+// ============================================================================
 
 [[nodiscard]] static std::size_t GetEnvSizeT(const char* name, std::size_t default_value)
 {
@@ -68,6 +73,10 @@ static const fs::path DEFAULT_WALLET_DIR =
     }
     return value;
 }
+
+// ============================================================================
+// Wallet scenario loading
+// ============================================================================
 
 struct WalletScenarioData {
     std::string scenario_id;
@@ -131,6 +140,47 @@ struct WalletScenarioData {
     return out;
 }
 
+[[nodiscard]] static std::vector<WalletScenarioData> LoadAllWalletScenarios(const fs::path& wallet_dir)
+{
+    std::vector<WalletScenarioData> wallets;
+    for (const auto& entry : fs::directory_iterator(wallet_dir)) {
+        if (!entry.is_regular_file()) continue;
+        if (entry.path().extension() != ".json") continue;
+        const std::string stem = fs::PathToString(entry.path().stem());
+        if (stem.find("wallet_use_case_") != 0) continue;
+        try {
+            wallets.push_back(LoadWalletScenarioData(entry.path()));
+        } catch (const std::exception& e) {
+            std::cerr << "WARNING: failed to load wallet " << fs::PathToString(entry.path())
+                      << ": " << e.what() << std::endl;
+        }
+    }
+    std::sort(wallets.begin(), wallets.end(), [](const WalletScenarioData& a, const WalletScenarioData& b) {
+        return a.wallet_scripts.size() < b.wallet_scripts.size();
+    });
+    if (wallets.empty()) {
+        throw std::runtime_error("no wallet scenarios found in " + fs::PathToString(wallet_dir));
+    }
+    return wallets;
+}
+
+[[nodiscard]] static std::vector<std::string> MakeShortNames(const std::vector<WalletScenarioData>& wallets)
+{
+    std::vector<std::string> names;
+    names.reserve(wallets.size());
+    const std::string pfx = "wallet_use_case_";
+    for (const auto& w : wallets) {
+        std::string n = w.scenario_id;
+        if (n.find(pfx) == 0) n = n.substr(pfx.size());
+        names.push_back(std::move(n));
+    }
+    return names;
+}
+
+// ============================================================================
+// Block element extraction
+// ============================================================================
+
 [[nodiscard]] static GCSFilter::ElementSet ExtractElementsFromChunkBlock(
     const FilterBench::TxBlockChunkStore::BlockRecord& block)
 {
@@ -172,6 +222,10 @@ struct PreparedBlock {
     }
     return blocks;
 }
+
+// ============================================================================
+// Ground truth validation
+// ============================================================================
 
 static void ValidateFuse16GroundTruth(
     const std::vector<PreparedBlock>& blocks,
@@ -221,40 +275,6 @@ static void ValidateGroundTruth(
               << " candidate_matches=" << candidate_match_block_indices.size()
               << " false_negatives=" << false_negative_count
               << std::endl;
-}
-
-static void ResearchBasicBinStreamingWalletScan(benchmark::Bench& bench)
-{
-    const fs::path bin_dir = GetEnvPath("HIER_BIN_DIR", DEFAULT_BIN_STREAM_DIR);
-    const fs::path wallet_scenario = GetEnvPath("BIN_WALLET_SCENARIO", DEFAULT_BIN_WALLET_SCENARIO);
-    const std::size_t scan_max_blocks = GetEnvSizeT("BIN_SCAN_MAX_BLOCKS", 1000);
-
-    std::cout << "Loading bin chunks from: " << fs::PathToString(bin_dir) << std::endl;
-    std::cout << "Loading wallet scenario: " << fs::PathToString(wallet_scenario) << std::endl;
-    const std::vector<FilterBench::BinChunkMeta> chunk_metas = FilterBench::LoadBinChunkMetas(bin_dir);
-    const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
-    const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
-
-    const std::vector<PreparedBlock> blocks = LoadBlocksFromBinStream(chunk_metas, scan_max_blocks);
-    ValidateGroundTruth(blocks, scenario, wallet_scripts);
-    ValidateFuse16GroundTruth(blocks, scenario, wallet_scripts);
-
-    bench.name("ResearchBasicBinStreamingWalletScan");
-    bench.run([&] {
-        std::size_t match_count{0};
-        for (const PreparedBlock& block : blocks) {
-            const GCSFilter::Params params(
-                block.block_hash.GetUint64(0),
-                block.block_hash.GetUint64(1),
-                BASIC_FILTER_P,
-                BASIC_FILTER_M);
-            const GCSFilter filter(params, block.elements);
-            if (filter.MatchAny(wallet_scripts)) {
-                ++match_count;
-            }
-        }
-        ankerl::nanobench::doNotOptimizeAway(match_count);
-    });
 }
 
 static void ValidateFuse16GroundTruth(
@@ -328,16 +348,6 @@ static void ValidateFuse16GroundTruth(
     }
 }
 
-// Standalone validation, not a benchmark. Used for smaller block counts.
-[[maybe_unused]] static void RunFuse16Verification(
-    const std::vector<PreparedBlock>& blocks,
-    const WalletScenarioData& scenario,
-    const GCSFilter::ElementSet& wallet_scripts)
-{
-    ValidateGroundTruth(blocks, scenario, wallet_scripts);
-    ValidateFuse16GroundTruth(blocks, scenario, wallet_scripts);
-}
-
 // Streaming ground-truth validation: processes one block at a time so memory
 // usage stays low even for 50k+ blocks.
 static void StreamingGroundTruthValidation(benchmark::Bench& bench)
@@ -398,7 +408,7 @@ static void StreamingGroundTruthValidation(benchmark::Bench& bench)
             }
         }
 
-        // Fuse16
+        // Fuse/Xor filters
         if (elements.size() < 2) {
             ++fuse16_stats.skipped_small;
             ++fuse20_stats.skipped_small;
@@ -492,341 +502,144 @@ static void StreamingGroundTruthValidation(benchmark::Bench& bench)
     bench.run([]{});
 }
 
-[[maybe_unused]] static void ValidateFuse8GroundTruth(
-    const std::vector<PreparedBlock>& blocks,
-    const WalletScenarioData& scenario,
-    const GCSFilter::ElementSet& wallet_scripts)
-{
-    if (!scenario.has_ground_truth) {
-        std::cout << "FUSE8_GROUND_TRUTH scenario=" << scenario.scenario_id
-                  << " SKIPPED (no ground truth data)" << std::endl;
-        return;
-    }
+// ============================================================================
+// Unified prebuilt filter data (replaces 7 identical structs)
+// ============================================================================
 
-    std::unordered_set<std::size_t> match_indices;
-    match_indices.reserve(blocks.size() / 4 + 1);
-    std::size_t skipped_small{0};
-    std::size_t construction_failures{0};
-    for (std::size_t i = 0; i < blocks.size(); ++i) {
-        const PreparedBlock& block = blocks[i];
-        if (block.elements.size() < 2) {
-            ++skipped_small;
-            continue;
-        }
-        try {
-            const Fuse8Filter filter(
-                block.block_hash.GetUint64(0),
-                block.block_hash.GetUint64(1),
-                block.elements);
-            if (filter.MatchAny(wallet_scripts)) {
-                match_indices.insert(i);
-            }
-        } catch (const std::runtime_error& e) {
-            ++construction_failures;
-            std::cerr << "\033[1;33mFUSE8 construction failed at block_index=" << i
-                      << " elements=" << block.elements.size()
-                      << ": " << e.what() << "\033[0m" << std::endl;
-        }
-    }
-
-    std::size_t in_range_true_hits{0};
-    std::size_t false_negative_count{0};
-    for (const std::size_t idx : scenario.ground_truth_block_indices) {
-        if (idx >= blocks.size()) continue;
-        ++in_range_true_hits;
-        if (match_indices.count(idx) == 0) {
-            ++false_negative_count;
-            std::cerr << "\033[1;31m*** FUSE8 FALSE NEGATIVE at block_index=" << idx
-                      << " (elements=" << blocks[idx].elements.size() << ")\033[0m" << std::endl;
-        }
-    }
-
-    const std::size_t false_positive_count = match_indices.size() > in_range_true_hits
-        ? match_indices.size() - (in_range_true_hits - false_negative_count)
-        : 0;
-
-    std::cout << "FUSE8_GROUND_TRUTH scenario=" << scenario.scenario_id
-              << " scanned_blocks=" << blocks.size()
-              << " skipped_small=" << skipped_small
-              << " construction_failures=" << construction_failures
-              << " true_hits_in_range=" << in_range_true_hits
-              << " candidate_matches=" << match_indices.size()
-              << " false_negatives=" << false_negative_count
-              << " false_positives=" << false_positive_count
-              << std::endl;
-
-    if (false_negative_count != 0) {
-        throw std::runtime_error(
-            "\033[1;31mFUSE8 GROUND-TRUTH VALIDATION FAILED: "
-            + std::to_string(false_negative_count) + " false negatives detected!"
-            + " scenario=" + scenario.scenario_id + "\033[0m");
-    }
-}
-
-[[maybe_unused]] static void ValidateXor8GroundTruth(
-    const std::vector<PreparedBlock>& blocks,
-    const WalletScenarioData& scenario,
-    const GCSFilter::ElementSet& wallet_scripts)
-{
-    if (!scenario.has_ground_truth) {
-        std::cout << "XOR8_GROUND_TRUTH scenario=" << scenario.scenario_id
-                  << " SKIPPED (no ground truth data)" << std::endl;
-        return;
-    }
-
-    std::unordered_set<std::size_t> match_indices;
-    match_indices.reserve(blocks.size() / 4 + 1);
-    std::size_t skipped_small{0};
-    std::size_t construction_failures{0};
-    for (std::size_t i = 0; i < blocks.size(); ++i) {
-        const PreparedBlock& block = blocks[i];
-        if (block.elements.empty()) {
-            ++skipped_small;
-            continue;
-        }
-        try {
-            const Xor8Filter filter(
-                block.block_hash.GetUint64(0),
-                block.block_hash.GetUint64(1),
-                block.elements);
-            if (filter.MatchAny(wallet_scripts)) {
-                match_indices.insert(i);
-            }
-        } catch (const std::runtime_error& e) {
-            ++construction_failures;
-            std::cerr << "\033[1;33mXOR8 construction failed at block_index=" << i
-                      << " elements=" << block.elements.size()
-                      << ": " << e.what() << "\033[0m" << std::endl;
-        }
-    }
-
-    std::size_t in_range_true_hits{0};
-    std::size_t false_negative_count{0};
-    for (const std::size_t idx : scenario.ground_truth_block_indices) {
-        if (idx >= blocks.size()) continue;
-        ++in_range_true_hits;
-        if (match_indices.count(idx) == 0) {
-            ++false_negative_count;
-            std::cerr << "\033[1;31m*** XOR8 FALSE NEGATIVE at block_index=" << idx
-                      << " (elements=" << blocks[idx].elements.size() << ")\033[0m" << std::endl;
-        }
-    }
-
-    const std::size_t false_positive_count = match_indices.size() > in_range_true_hits
-        ? match_indices.size() - (in_range_true_hits - false_negative_count)
-        : 0;
-
-    std::cout << "XOR8_GROUND_TRUTH scenario=" << scenario.scenario_id
-              << " scanned_blocks=" << blocks.size()
-              << " skipped_small=" << skipped_small
-              << " construction_failures=" << construction_failures
-              << " true_hits_in_range=" << in_range_true_hits
-              << " candidate_matches=" << match_indices.size()
-              << " false_negatives=" << false_negative_count
-              << " false_positives=" << false_positive_count
-              << std::endl;
-
-    if (false_negative_count != 0) {
-        throw std::runtime_error(
-            "\033[1;31mXOR8 GROUND-TRUTH VALIDATION FAILED: "
-            + std::to_string(false_negative_count) + " false negatives detected!"
-            + " scenario=" + scenario.scenario_id + "\033[0m");
-    }
-}
+struct PrebuiltFilterData {
+    uint64_t siphash_k0;
+    uint64_t siphash_k1;
+    std::vector<unsigned char> serialized;
+    uint32_t block_size{0};
+    std::size_t block_index{0};
+};
 
 struct PrebuiltGCSData {
     GCSFilter::Params params;
     std::vector<unsigned char> encoded;
-    uint32_t block_size{0};  // original block size in bytes (from sidecar)
-    std::size_t block_index{0}; // sequential index in the dataset (for ground-truth lookup)
-};
-
-struct PrebuiltFuse12Data {
-    uint64_t siphash_k0;
-    uint64_t siphash_k1;
-    std::vector<unsigned char> serialized;
     uint32_t block_size{0};
     std::size_t block_index{0};
 };
 
-struct PrebuiltFuse16Data {
-    uint64_t siphash_k0;
-    uint64_t siphash_k1;
-    std::vector<unsigned char> serialized;
-    uint32_t block_size{0};
-    std::size_t block_index{0};
-};
+// ============================================================================
+// Streaming filter builders
+// ============================================================================
 
-struct PrebuiltFuse18Data {
-    uint64_t siphash_k0;
-    uint64_t siphash_k1;
-    std::vector<unsigned char> serialized;
-    uint32_t block_size{0};
-    std::size_t block_index{0};
-};
-
-struct PrebuiltFuse20Data {
-    uint64_t siphash_k0;
-    uint64_t siphash_k1;
-    std::vector<unsigned char> serialized;
-    uint32_t block_size{0};
-    std::size_t block_index{0};
-};
-
-struct PrebuiltFuse32Data {
-    uint64_t siphash_k0;
-    uint64_t siphash_k1;
-    std::vector<unsigned char> serialized;
-    uint32_t block_size{0};
-    std::size_t block_index{0};
-};
-
-struct PrebuiltFuse8Data {
-    uint64_t siphash_k0;
-    uint64_t siphash_k1;
-    std::vector<unsigned char> serialized;
-    uint32_t block_size{0};
-    std::size_t block_index{0};
-};
-
-struct PrebuiltXor8Data {
-    uint64_t siphash_k0;
-    uint64_t siphash_k1;
-    std::vector<unsigned char> serialized;
-    uint32_t block_size{0};
-    std::size_t block_index{0};
-};
-
-// Per-filter-type prebuild results. Each benchmark builds only what it needs
-// to avoid excessive memory usage at large block counts.
-
-struct GCSBenchFilters {
-    std::vector<PrebuiltGCSData> data;
-    std::size_t skipped_small{0};
-    std::size_t total_bytes{0};
-};
-
-[[nodiscard]] [[maybe_unused]] static GCSBenchFilters BuildGCSFilters(const std::vector<PreparedBlock>& blocks)
-{
-    GCSBenchFilters out;
-    out.data.reserve(blocks.size());
-    for (const PreparedBlock& block : blocks) {
-        if (block.elements.size() < 2) { ++out.skipped_small; continue; }
-        const uint64_t k0 = block.block_hash.GetUint64(0);
-        const uint64_t k1 = block.block_hash.GetUint64(1);
-        GCSFilter::Params params(k0, k1, BASIC_FILTER_P, BASIC_FILTER_M);
-        GCSFilter filter(params, block.elements);
-        out.total_bytes += filter.GetEncoded().size();
-        out.data.push_back(PrebuiltGCSData{params, filter.GetEncoded()});
-    }
-    return out;
-}
-
-// Streaming variant: reads blocks from bin stream, builds GCS filters on-the-fly,
-// and discards block elements immediately. Much lower peak memory than loading all
-// blocks first.
-[[nodiscard]] static GCSBenchFilters BuildGCSFiltersStreaming(
+[[nodiscard]] static std::vector<PrebuiltGCSData> BuildGCSFiltersStreaming(
     const std::vector<FilterBench::BinChunkMeta>& chunk_metas,
-    std::size_t max_blocks)
+    std::size_t max_blocks,
+    std::size_t& out_skipped_small,
+    std::size_t& out_total_bytes)
 {
-    GCSBenchFilters out;
-    if (max_blocks > 0) out.data.reserve(max_blocks);
+    std::vector<PrebuiltGCSData> data;
+    if (max_blocks > 0) data.reserve(max_blocks);
+    out_skipped_small = 0;
+    out_total_bytes = 0;
     std::size_t block_index{0};
     FilterBench::TxBlockStreamReader reader(chunk_metas, max_blocks);
     while (reader.HasMore()) {
         const auto block = reader.ReadNextBlock();
         const std::size_t cur_index = block_index++;
         GCSFilter::ElementSet elements = ExtractElementsFromChunkBlock(block);
-        if (elements.size() < 2) { ++out.skipped_small; continue; }
+        if (elements.size() < 2) { ++out_skipped_small; continue; }
         const uint64_t k0 = block.block_hash.GetUint64(0);
         const uint64_t k1 = block.block_hash.GetUint64(1);
         GCSFilter::Params params(k0, k1, BASIC_FILTER_P, BASIC_FILTER_M);
         GCSFilter filter(params, elements);
-        out.total_bytes += filter.GetEncoded().size();
-        out.data.push_back(PrebuiltGCSData{params, filter.GetEncoded(),
-                                           block.block_size.value_or(0), cur_index});
+        out_total_bytes += filter.GetEncoded().size();
+        data.push_back(PrebuiltGCSData{params, filter.GetEncoded(),
+                                       block.block_size.value_or(0), cur_index});
     }
-    if (out.data.empty()) {
+    if (data.empty()) {
         throw std::runtime_error("no blocks loaded from bin stream");
     }
-    if (!out.data.empty() && out.data.front().block_size == 0) {
-        std::cerr << "\033[1;33mWARNING: block_size is 0 — .block_sizes.json sidecars may be missing. "
+    if (data.front().block_size == 0) {
+        std::cerr << "\033[1;33mWARNING: block_size is 0 -- .block_sizes.json sidecars may be missing. "
                   << "FP block download metrics will be underreported.\033[0m" << std::endl;
     }
-    return out;
+    return data;
 }
 
-template<typename FilterT, typename PrebuiltT>
-struct ExperimentalBenchFilters {
-    std::vector<PrebuiltT> data;
-    std::size_t skipped_small{0};
-    std::size_t construction_failures{0};
-    std::size_t total_bytes{0};
-};
-
-template<typename FilterT, typename PrebuiltT>
-[[nodiscard]] static ExperimentalBenchFilters<FilterT, PrebuiltT>
-BuildExperimentalFilters(const std::vector<PreparedBlock>& blocks)
-{
-    ExperimentalBenchFilters<FilterT, PrebuiltT> out;
-    out.data.reserve(blocks.size());
-    for (const PreparedBlock& block : blocks) {
-        if (block.elements.size() < 2) { ++out.skipped_small; continue; }
-        const uint64_t k0 = block.block_hash.GetUint64(0);
-        const uint64_t k1 = block.block_hash.GetUint64(1);
-        try {
-            FilterT filter(k0, k1, block.elements);
-            auto serialized = filter.Serialize();
-            out.total_bytes += serialized.size();
-            out.data.push_back(PrebuiltT{k0, k1, std::move(serialized)});
-        } catch (const std::runtime_error& e) {
-            ++out.construction_failures;
-            std::cerr << "\033[1;33m" << "Filter construction failed (elements=" << block.elements.size()
-                      << "): " << e.what() << "\033[0m" << std::endl;
-        }
-    }
-    return out;
-}
-
-// Streaming variant for experimental filters: reads blocks from bin stream,
-// builds filters on-the-fly, discards block elements immediately.
-template<typename FilterT, typename PrebuiltT>
-[[nodiscard]] static ExperimentalBenchFilters<FilterT, PrebuiltT>
-BuildExperimentalFiltersStreaming(
+template<typename FilterT>
+[[nodiscard]] static std::vector<PrebuiltFilterData> BuildFuseFiltersStreaming(
     const std::vector<FilterBench::BinChunkMeta>& chunk_metas,
-    std::size_t max_blocks)
+    std::size_t max_blocks,
+    std::size_t& out_skipped_small,
+    std::size_t& out_construction_failures,
+    std::size_t& out_total_bytes)
 {
-    ExperimentalBenchFilters<FilterT, PrebuiltT> out;
-    if (max_blocks > 0) out.data.reserve(max_blocks);
+    std::vector<PrebuiltFilterData> data;
+    if (max_blocks > 0) data.reserve(max_blocks);
+    out_skipped_small = 0;
+    out_construction_failures = 0;
+    out_total_bytes = 0;
     std::size_t block_index{0};
     FilterBench::TxBlockStreamReader reader(chunk_metas, max_blocks);
     while (reader.HasMore()) {
         const auto block = reader.ReadNextBlock();
         const std::size_t cur_index = block_index++;
         GCSFilter::ElementSet elements = ExtractElementsFromChunkBlock(block);
-        if (elements.size() < 2) { ++out.skipped_small; continue; }
+        if (elements.size() < 2) { ++out_skipped_small; continue; }
         const uint64_t k0 = block.block_hash.GetUint64(0);
         const uint64_t k1 = block.block_hash.GetUint64(1);
         try {
             FilterT filter(k0, k1, elements);
             auto serialized = filter.Serialize();
-            out.total_bytes += serialized.size();
-            out.data.push_back(PrebuiltT{k0, k1, std::move(serialized),
-                                         block.block_size.value_or(0), cur_index});
+            out_total_bytes += serialized.size();
+            data.push_back(PrebuiltFilterData{k0, k1, std::move(serialized),
+                                              block.block_size.value_or(0), cur_index});
         } catch (const std::runtime_error& e) {
-            ++out.construction_failures;
+            ++out_construction_failures;
             std::cerr << "\033[1;33mFilter construction failed (elements=" << elements.size()
                       << "): " << e.what() << "\033[0m" << std::endl;
         }
     }
-    if (out.data.empty()) {
+    if (data.empty()) {
         throw std::runtime_error("no filters built from bin stream");
     }
-    if (!out.data.empty() && out.data.front().block_size == 0) {
-        std::cerr << "\033[1;33mWARNING: block_size is 0 — .block_sizes.json sidecars may be missing. "
+    if (data.front().block_size == 0) {
+        std::cerr << "\033[1;33mWARNING: block_size is 0 -- .block_sizes.json sidecars may be missing. "
                   << "FP block download metrics will be underreported.\033[0m" << std::endl;
     }
-    return out;
+    return data;
+}
+
+// ============================================================================
+// Individual client-side query benchmarks (templatized)
+// ============================================================================
+
+static void ResearchBasicBinStreamingWalletScan(benchmark::Bench& bench)
+{
+    const fs::path bin_dir = GetEnvPath("HIER_BIN_DIR", DEFAULT_BIN_STREAM_DIR);
+    const fs::path wallet_scenario = GetEnvPath("BIN_WALLET_SCENARIO", DEFAULT_BIN_WALLET_SCENARIO);
+    const std::size_t scan_max_blocks = GetEnvSizeT("BIN_SCAN_MAX_BLOCKS", 1000);
+
+    std::cout << "Loading bin chunks from: " << fs::PathToString(bin_dir) << std::endl;
+    std::cout << "Loading wallet scenario: " << fs::PathToString(wallet_scenario) << std::endl;
+    const std::vector<FilterBench::BinChunkMeta> chunk_metas = FilterBench::LoadBinChunkMetas(bin_dir);
+    const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
+    const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
+
+    const std::vector<PreparedBlock> blocks = LoadBlocksFromBinStream(chunk_metas, scan_max_blocks);
+    ValidateGroundTruth(blocks, scenario, wallet_scripts);
+    ValidateFuse16GroundTruth(blocks, scenario, wallet_scripts);
+
+    bench.name("ResearchBasicBinStreamingWalletScan");
+    bench.run([&] {
+        std::size_t match_count{0};
+        for (const PreparedBlock& block : blocks) {
+            const GCSFilter::Params params(
+                block.block_hash.GetUint64(0),
+                block.block_hash.GetUint64(1),
+                BASIC_FILTER_P,
+                BASIC_FILTER_M);
+            const GCSFilter filter(params, block.elements);
+            if (filter.MatchAny(wallet_scripts)) {
+                ++match_count;
+            }
+        }
+        ankerl::nanobench::doNotOptimizeAway(match_count);
+    });
 }
 
 static void ResearchBasicClientSideQuery(benchmark::Bench& bench)
@@ -840,13 +653,13 @@ static void ResearchBasicClientSideQuery(benchmark::Bench& bench)
     const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
     const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
 
-    GCSBenchFilters filters = BuildGCSFiltersStreaming(chunk_metas, scan_max_blocks);
+    std::size_t skipped_small{0}, total_bytes{0};
+    std::vector<PrebuiltGCSData> filters = BuildGCSFiltersStreaming(chunk_metas, scan_max_blocks, skipped_small, total_bytes);
 
-    const double total_mb = static_cast<double>(filters.total_bytes) / (1024.0 * 1024.0);
-    // One-shot pass to count matches and FP block bandwidth.
+    const double total_mb = static_cast<double>(total_bytes) / (1024.0 * 1024.0);
     std::size_t total_matches{0};
     std::size_t fp_block_bytes{0};
-    for (const PrebuiltGCSData& d : filters.data) {
+    for (const PrebuiltGCSData& d : filters) {
         const GCSFilter filter(d.params, d.encoded, /*skip_decode_check=*/true);
         if (filter.MatchAny(wallet_scripts)) {
             ++total_matches;
@@ -857,10 +670,10 @@ static void ResearchBasicClientSideQuery(benchmark::Bench& bench)
         }
     }
     const double fp_block_mb = static_cast<double>(fp_block_bytes) / (1024.0 * 1024.0);
-    std::cout << "[BasicClientQuery] " << filters.data.size() << " GCS filters"
-              << " (skipped " << filters.skipped_small << " small)"
-              << ", total=" << filters.total_bytes << " bytes (" << total_mb << " MB)"
-              << ", avg=" << (filters.data.empty() ? 0 : filters.total_bytes / filters.data.size()) << " bytes/filter"
+    std::cout << "[BasicClientQuery] " << filters.size() << " GCS filters"
+              << " (skipped " << skipped_small << " small)"
+              << ", total=" << total_bytes << " bytes (" << total_mb << " MB)"
+              << ", avg=" << (filters.empty() ? 0 : total_bytes / filters.size()) << " bytes/filter"
               << ", matches=" << total_matches
               << ", fp_block_download=" << fp_block_mb << " MB"
               << std::endl;
@@ -868,7 +681,7 @@ static void ResearchBasicClientSideQuery(benchmark::Bench& bench)
     bench.name("ResearchBasicClientSideQuery");
     bench.run([&] {
         std::size_t match_count{0};
-        for (const PrebuiltGCSData& d : filters.data) {
+        for (const PrebuiltGCSData& d : filters) {
             const GCSFilter filter(d.params, d.encoded, /*skip_decode_check=*/true);
             if (filter.MatchAny(wallet_scripts)) {
                 ++match_count;
@@ -878,24 +691,29 @@ static void ResearchBasicClientSideQuery(benchmark::Bench& bench)
     });
 }
 
-static void ResearchFuse16ClientSideQuery(benchmark::Bench& bench)
+// Templatized client-side query benchmark for all Fuse/Xor filter types.
+template<typename FilterT>
+static void ResearchFuseClientSideQuery(benchmark::Bench& bench, const char* filter_name, const char* bench_name)
 {
     const fs::path bin_dir = GetEnvPath("HIER_BIN_DIR", DEFAULT_BIN_STREAM_DIR);
     const fs::path wallet_scenario = GetEnvPath("BIN_WALLET_SCENARIO", DEFAULT_BIN_WALLET_SCENARIO);
     const std::size_t scan_max_blocks = GetEnvSizeT("BIN_SCAN_MAX_BLOCKS", 1000);
 
-    std::cout << "[Fuse16ClientQuery] Building Fuse16 filters for " << scan_max_blocks << " blocks (streaming)..." << std::endl;
+    std::cout << "[" << filter_name << "ClientQuery] Building " << filter_name
+              << " filters for " << scan_max_blocks << " blocks (streaming)..." << std::endl;
     const std::vector<FilterBench::BinChunkMeta> chunk_metas = FilterBench::LoadBinChunkMetas(bin_dir);
     const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
     const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
 
-    auto filters = BuildExperimentalFiltersStreaming<Fuse16Filter, PrebuiltFuse16Data>(chunk_metas, scan_max_blocks);
+    std::size_t skipped_small{0}, construction_failures{0}, total_bytes{0};
+    std::vector<PrebuiltFilterData> filters = BuildFuseFiltersStreaming<FilterT>(
+        chunk_metas, scan_max_blocks, skipped_small, construction_failures, total_bytes);
 
-    const double total_mb = static_cast<double>(filters.total_bytes) / (1024.0 * 1024.0);
+    const double total_mb = static_cast<double>(total_bytes) / (1024.0 * 1024.0);
     std::size_t total_matches{0};
     std::size_t fp_block_bytes{0};
-    for (const PrebuiltFuse16Data& d : filters.data) {
-        Fuse16Filter filter = Fuse16Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
+    for (const PrebuiltFilterData& d : filters) {
+        FilterT filter = FilterT::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
         if (filter.MatchAny(wallet_scripts)) {
             ++total_matches;
             if (scenario.has_ground_truth &&
@@ -905,20 +723,20 @@ static void ResearchFuse16ClientSideQuery(benchmark::Bench& bench)
         }
     }
     const double fp_block_mb = static_cast<double>(fp_block_bytes) / (1024.0 * 1024.0);
-    std::cout << "[Fuse16ClientQuery] " << filters.data.size() << " Fuse16 filters"
-              << " (skipped " << filters.skipped_small << " small, "
-              << filters.construction_failures << " failed)"
-              << ", total=" << filters.total_bytes << " bytes (" << total_mb << " MB)"
-              << ", avg=" << (filters.data.empty() ? 0 : filters.total_bytes / filters.data.size()) << " bytes/filter"
+    std::cout << "[" << filter_name << "ClientQuery] " << filters.size() << " " << filter_name << " filters"
+              << " (skipped " << skipped_small << " small, "
+              << construction_failures << " failed)"
+              << ", total=" << total_bytes << " bytes (" << total_mb << " MB)"
+              << ", avg=" << (filters.empty() ? 0 : total_bytes / filters.size()) << " bytes/filter"
               << ", matches=" << total_matches
               << ", fp_block_download=" << fp_block_mb << " MB"
               << std::endl;
 
-    bench.name("ResearchFuse16ClientSideQuery");
+    bench.name(bench_name);
     bench.run([&] {
         std::size_t match_count{0};
-        for (const PrebuiltFuse16Data& d : filters.data) {
-            Fuse16Filter filter = Fuse16Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
+        for (const PrebuiltFilterData& d : filters) {
+            FilterT filter = FilterT::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
             if (filter.MatchAny(wallet_scripts)) {
                 ++match_count;
             }
@@ -927,294 +745,153 @@ static void ResearchFuse16ClientSideQuery(benchmark::Bench& bench)
     });
 }
 
-static void ResearchFuse20ClientSideQuery(benchmark::Bench& bench)
+// Thin wrappers to preserve original benchmark names.
+static void ResearchFuse8ClientSideQuery(benchmark::Bench& bench)  { ResearchFuseClientSideQuery<Fuse8Filter>(bench, "Fuse8", "ResearchFuse8ClientSideQuery"); }
+static void ResearchFuse12ClientSideQuery(benchmark::Bench& bench) { ResearchFuseClientSideQuery<Fuse12Filter>(bench, "Fuse12", "ResearchFuse12ClientSideQuery"); }
+static void ResearchFuse16ClientSideQuery(benchmark::Bench& bench) { ResearchFuseClientSideQuery<Fuse16Filter>(bench, "Fuse16", "ResearchFuse16ClientSideQuery"); }
+static void ResearchFuse18ClientSideQuery(benchmark::Bench& bench) { ResearchFuseClientSideQuery<Fuse18Filter>(bench, "Fuse18", "ResearchFuse18ClientSideQuery"); }
+static void ResearchFuse20ClientSideQuery(benchmark::Bench& bench) { ResearchFuseClientSideQuery<Fuse20Filter>(bench, "Fuse20", "ResearchFuse20ClientSideQuery"); }
+static void ResearchFuse32ClientSideQuery(benchmark::Bench& bench) { ResearchFuseClientSideQuery<Fuse32Filter>(bench, "Fuse32", "ResearchFuse32ClientSideQuery"); }
+static void ResearchXor8ClientSideQuery(benchmark::Bench& bench)   { ResearchFuseClientSideQuery<Xor8Filter>(bench, "Xor8", "ResearchXor8ClientSideQuery"); }
+
+// ============================================================================
+// Hierarchical two-layer benchmarks (Fuse12+18, Fuse16+20)
+// ============================================================================
+
+template<typename OuterFilterT, typename InnerFilterT>
+static void ResearchHierarchical(
+    benchmark::Bench& bench,
+    const char* label,
+    const char* bench_name,
+    uint64_t inner_domain_k0,
+    uint64_t inner_domain_k1)
 {
     const fs::path bin_dir = GetEnvPath("HIER_BIN_DIR", DEFAULT_BIN_STREAM_DIR);
     const fs::path wallet_scenario = GetEnvPath("BIN_WALLET_SCENARIO", DEFAULT_BIN_WALLET_SCENARIO);
     const std::size_t scan_max_blocks = GetEnvSizeT("BIN_SCAN_MAX_BLOCKS", 1000);
 
-    std::cout << "[Fuse20ClientQuery] Building Fuse20 filters for " << scan_max_blocks << " blocks (streaming)..." << std::endl;
+    std::cout << "[Hierarchical " << label << "] Building paired filters for " << scan_max_blocks << " blocks..." << std::endl;
     const std::vector<FilterBench::BinChunkMeta> chunk_metas = FilterBench::LoadBinChunkMetas(bin_dir);
     const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
     const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
 
-    auto filters = BuildExperimentalFiltersStreaming<Fuse20Filter, PrebuiltFuse20Data>(chunk_metas, scan_max_blocks);
+    struct PairedFilters {
+        PrebuiltFilterData outer;
+        PrebuiltFilterData inner;
+    };
+    std::vector<PairedFilters> paired;
+    std::size_t skipped_small{0};
+    std::size_t construction_failures{0};
+    std::size_t outer_total_bytes{0};
+    std::size_t inner_total_bytes{0};
 
-    const double total_mb = static_cast<double>(filters.total_bytes) / (1024.0 * 1024.0);
-    std::size_t total_matches{0};
+    if (scan_max_blocks > 0) paired.reserve(scan_max_blocks);
+    std::size_t block_index{0};
+    FilterBench::TxBlockStreamReader reader(chunk_metas, scan_max_blocks);
+    while (reader.HasMore()) {
+        const auto block = reader.ReadNextBlock();
+        const std::size_t cur_index = block_index++;
+        GCSFilter::ElementSet elements = ExtractElementsFromChunkBlock(block);
+        if (elements.size() < 2) { ++skipped_small; continue; }
+
+        const uint64_t k0 = block.block_hash.GetUint64(0);
+        const uint64_t k1 = block.block_hash.GetUint64(1);
+        const uint32_t bsz = block.block_size.value_or(0);
+
+        const uint64_t ik0 = CSipHasher(inner_domain_k0, inner_domain_k1).Write(k0).Write(k1).Finalize();
+        const uint64_t ik1 = CSipHasher(inner_domain_k1, inner_domain_k0).Write(k1).Write(k0).Finalize();
+
+        try {
+            OuterFilterT outer(k0, k1, elements);
+            InnerFilterT inner(ik0, ik1, elements);
+            auto ser_outer = outer.Serialize();
+            auto ser_inner = inner.Serialize();
+            outer_total_bytes += ser_outer.size();
+            inner_total_bytes += ser_inner.size();
+            paired.push_back(PairedFilters{
+                PrebuiltFilterData{k0, k1, std::move(ser_outer), bsz, cur_index},
+                PrebuiltFilterData{ik0, ik1, std::move(ser_inner), bsz, cur_index},
+            });
+        } catch (...) { ++construction_failures; }
+    }
+
+    // One-shot stats pass.
+    std::size_t outer_block_matches{0};
+    std::size_t inner_checks{0};
+    std::size_t final_matches{0};
+    std::size_t total_outer_script_hits{0};
+    std::size_t inner_bandwidth{0};
     std::size_t fp_block_bytes{0};
-    for (const PrebuiltFuse20Data& d : filters.data) {
-        Fuse20Filter filter = Fuse20Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
-        if (filter.MatchAny(wallet_scripts)) {
-            ++total_matches;
+
+    using Element = typename OuterFilterT::Element;
+
+    for (const PairedFilters& p : paired) {
+        OuterFilterT outer = OuterFilterT::Deserialize(p.outer.siphash_k0, p.outer.siphash_k1, p.outer.serialized);
+
+        std::vector<Element> candidates;
+        for (const auto& script : wallet_scripts) {
+            if (outer.Match(script)) {
+                candidates.push_back(script);
+            }
+        }
+        if (candidates.empty()) continue;
+
+        ++outer_block_matches;
+        total_outer_script_hits += candidates.size();
+
+        ++inner_checks;
+        inner_bandwidth += p.inner.serialized.size();
+        InnerFilterT inner = InnerFilterT::Deserialize(p.inner.siphash_k0, p.inner.siphash_k1, p.inner.serialized);
+        bool confirmed = false;
+        for (const auto& candidate : candidates) {
+            if (inner.Match(candidate)) {
+                confirmed = true;
+                break;
+            }
+        }
+        if (confirmed) {
+            ++final_matches;
             if (scenario.has_ground_truth &&
-                scenario.ground_truth_block_indices.count(d.block_index) == 0) {
-                fp_block_bytes += d.block_size;
+                scenario.ground_truth_block_indices.count(p.outer.block_index) == 0) {
+                fp_block_bytes += p.outer.block_size;
             }
         }
     }
+
+    const double outer_mb = static_cast<double>(outer_total_bytes) / (1024.0 * 1024.0);
+    const double inner_bw_mb = static_cast<double>(inner_bandwidth) / (1024.0 * 1024.0);
+    const double filter_total_mb = outer_mb + inner_bw_mb;
     const double fp_block_mb = static_cast<double>(fp_block_bytes) / (1024.0 * 1024.0);
-    std::cout << "[Fuse20ClientQuery] " << filters.data.size() << " Fuse20 filters"
-              << " (skipped " << filters.skipped_small << " small, "
-              << filters.construction_failures << " failed)"
-              << ", total=" << filters.total_bytes << " bytes (" << total_mb << " MB)"
-              << ", avg=" << (filters.data.empty() ? 0 : filters.total_bytes / filters.data.size()) << " bytes/filter"
-              << ", matches=" << total_matches
+    std::cout << "[" << label << "] " << paired.size() << " paired filters"
+              << " (skipped " << skipped_small << " small, " << construction_failures << " failed)"
+              << ", total_filter=" << filter_total_mb << " MB"
+              << " (" << label << " outer=" << outer_mb << " MB + inner_ondemand=" << inner_bw_mb << " MB)"
+              << ", matches=" << final_matches
+              << ", outer_block_matches=" << outer_block_matches
+              << ", eliminated=" << (outer_block_matches - final_matches)
               << ", fp_block_download=" << fp_block_mb << " MB"
               << std::endl;
 
-    bench.name("ResearchFuse20ClientSideQuery");
+    bench.name(bench_name);
     bench.run([&] {
         std::size_t match_count{0};
-        for (const PrebuiltFuse20Data& d : filters.data) {
-            Fuse20Filter filter = Fuse20Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
-            if (filter.MatchAny(wallet_scripts)) {
-                ++match_count;
+        for (const PairedFilters& p : paired) {
+            OuterFilterT outer = OuterFilterT::Deserialize(p.outer.siphash_k0, p.outer.siphash_k1, p.outer.serialized);
+
+            std::vector<Element> candidates;
+            for (const auto& script : wallet_scripts) {
+                if (outer.Match(script)) {
+                    candidates.push_back(script);
+                }
             }
-        }
-        ankerl::nanobench::doNotOptimizeAway(match_count);
-    });
-}
+            if (candidates.empty()) continue;
 
-static void ResearchFuse32ClientSideQuery(benchmark::Bench& bench)
-{
-    const fs::path bin_dir = GetEnvPath("HIER_BIN_DIR", DEFAULT_BIN_STREAM_DIR);
-    const fs::path wallet_scenario = GetEnvPath("BIN_WALLET_SCENARIO", DEFAULT_BIN_WALLET_SCENARIO);
-    const std::size_t scan_max_blocks = GetEnvSizeT("BIN_SCAN_MAX_BLOCKS", 1000);
-
-    std::cout << "[Fuse32ClientQuery] Building Fuse32 filters for " << scan_max_blocks << " blocks (streaming)..." << std::endl;
-    const std::vector<FilterBench::BinChunkMeta> chunk_metas = FilterBench::LoadBinChunkMetas(bin_dir);
-    const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
-    const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
-
-    auto filters = BuildExperimentalFiltersStreaming<Fuse32Filter, PrebuiltFuse32Data>(chunk_metas, scan_max_blocks);
-
-    const double total_mb = static_cast<double>(filters.total_bytes) / (1024.0 * 1024.0);
-    std::size_t total_matches{0};
-    std::size_t fp_block_bytes{0};
-    for (const PrebuiltFuse32Data& d : filters.data) {
-        Fuse32Filter filter = Fuse32Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
-        if (filter.MatchAny(wallet_scripts)) {
-            ++total_matches;
-            if (scenario.has_ground_truth &&
-                scenario.ground_truth_block_indices.count(d.block_index) == 0) {
-                fp_block_bytes += d.block_size;
-            }
-        }
-    }
-    const double fp_block_mb = static_cast<double>(fp_block_bytes) / (1024.0 * 1024.0);
-    std::cout << "[Fuse32ClientQuery] " << filters.data.size() << " Fuse32 filters"
-              << " (skipped " << filters.skipped_small << " small, "
-              << filters.construction_failures << " failed)"
-              << ", total=" << filters.total_bytes << " bytes (" << total_mb << " MB)"
-              << ", avg=" << (filters.data.empty() ? 0 : filters.total_bytes / filters.data.size()) << " bytes/filter"
-              << ", matches=" << total_matches
-              << ", fp_block_download=" << fp_block_mb << " MB"
-              << std::endl;
-
-    bench.name("ResearchFuse32ClientSideQuery");
-    bench.run([&] {
-        std::size_t match_count{0};
-        for (const PrebuiltFuse32Data& d : filters.data) {
-            Fuse32Filter filter = Fuse32Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
-            if (filter.MatchAny(wallet_scripts)) {
-                ++match_count;
-            }
-        }
-        ankerl::nanobench::doNotOptimizeAway(match_count);
-    });
-}
-
-static void ResearchFuse8ClientSideQuery(benchmark::Bench& bench)
-{
-    const fs::path bin_dir = GetEnvPath("HIER_BIN_DIR", DEFAULT_BIN_STREAM_DIR);
-    const fs::path wallet_scenario = GetEnvPath("BIN_WALLET_SCENARIO", DEFAULT_BIN_WALLET_SCENARIO);
-    const std::size_t scan_max_blocks = GetEnvSizeT("BIN_SCAN_MAX_BLOCKS", 1000);
-
-    std::cout << "[Fuse8ClientQuery] Building Fuse8 filters for " << scan_max_blocks << " blocks (streaming)..." << std::endl;
-    const std::vector<FilterBench::BinChunkMeta> chunk_metas = FilterBench::LoadBinChunkMetas(bin_dir);
-    const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
-    const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
-
-    auto filters = BuildExperimentalFiltersStreaming<Fuse8Filter, PrebuiltFuse8Data>(chunk_metas, scan_max_blocks);
-
-    const double total_mb = static_cast<double>(filters.total_bytes) / (1024.0 * 1024.0);
-    std::size_t total_matches{0};
-    std::size_t fp_block_bytes{0};
-    for (const PrebuiltFuse8Data& d : filters.data) {
-        Fuse8Filter filter = Fuse8Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
-        if (filter.MatchAny(wallet_scripts)) {
-            ++total_matches;
-            if (scenario.has_ground_truth &&
-                scenario.ground_truth_block_indices.count(d.block_index) == 0) {
-                fp_block_bytes += d.block_size;
-            }
-        }
-    }
-    const double fp_block_mb = static_cast<double>(fp_block_bytes) / (1024.0 * 1024.0);
-    std::cout << "[Fuse8ClientQuery] " << filters.data.size() << " Fuse8 filters"
-              << " (skipped " << filters.skipped_small << " small, "
-              << filters.construction_failures << " failed)"
-              << ", total=" << filters.total_bytes << " bytes (" << total_mb << " MB)"
-              << ", avg=" << (filters.data.empty() ? 0 : filters.total_bytes / filters.data.size()) << " bytes/filter"
-              << ", matches=" << total_matches
-              << ", fp_block_download=" << fp_block_mb << " MB"
-              << std::endl;
-
-    bench.name("ResearchFuse8ClientSideQuery");
-    bench.run([&] {
-        std::size_t match_count{0};
-        for (const PrebuiltFuse8Data& d : filters.data) {
-            Fuse8Filter filter = Fuse8Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
-            if (filter.MatchAny(wallet_scripts)) {
-                ++match_count;
-            }
-        }
-        ankerl::nanobench::doNotOptimizeAway(match_count);
-    });
-}
-
-static void ResearchXor8ClientSideQuery(benchmark::Bench& bench)
-{
-    const fs::path bin_dir = GetEnvPath("HIER_BIN_DIR", DEFAULT_BIN_STREAM_DIR);
-    const fs::path wallet_scenario = GetEnvPath("BIN_WALLET_SCENARIO", DEFAULT_BIN_WALLET_SCENARIO);
-    const std::size_t scan_max_blocks = GetEnvSizeT("BIN_SCAN_MAX_BLOCKS", 1000);
-
-    std::cout << "[Xor8ClientQuery] Building Xor8 filters for " << scan_max_blocks << " blocks (streaming)..." << std::endl;
-    const std::vector<FilterBench::BinChunkMeta> chunk_metas = FilterBench::LoadBinChunkMetas(bin_dir);
-    const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
-    const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
-
-    auto filters = BuildExperimentalFiltersStreaming<Xor8Filter, PrebuiltXor8Data>(chunk_metas, scan_max_blocks);
-
-    const double total_mb = static_cast<double>(filters.total_bytes) / (1024.0 * 1024.0);
-    std::size_t total_matches{0};
-    std::size_t fp_block_bytes{0};
-    for (const PrebuiltXor8Data& d : filters.data) {
-        Xor8Filter filter = Xor8Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
-        if (filter.MatchAny(wallet_scripts)) {
-            ++total_matches;
-            if (scenario.has_ground_truth &&
-                scenario.ground_truth_block_indices.count(d.block_index) == 0) {
-                fp_block_bytes += d.block_size;
-            }
-        }
-    }
-    const double fp_block_mb = static_cast<double>(fp_block_bytes) / (1024.0 * 1024.0);
-    std::cout << "[Xor8ClientQuery] " << filters.data.size() << " Xor8 filters"
-              << " (skipped " << filters.skipped_small << " small, "
-              << filters.construction_failures << " failed)"
-              << ", total=" << filters.total_bytes << " bytes (" << total_mb << " MB)"
-              << ", avg=" << (filters.data.empty() ? 0 : filters.total_bytes / filters.data.size()) << " bytes/filter"
-              << ", matches=" << total_matches
-              << ", fp_block_download=" << fp_block_mb << " MB"
-              << std::endl;
-
-    bench.name("ResearchXor8ClientSideQuery");
-    bench.run([&] {
-        std::size_t match_count{0};
-        for (const PrebuiltXor8Data& d : filters.data) {
-            Xor8Filter filter = Xor8Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
-            if (filter.MatchAny(wallet_scripts)) {
-                ++match_count;
-            }
-        }
-        ankerl::nanobench::doNotOptimizeAway(match_count);
-    });
-}
-
-static void ResearchFuse12ClientSideQuery(benchmark::Bench& bench)
-{
-    const fs::path bin_dir = GetEnvPath("HIER_BIN_DIR", DEFAULT_BIN_STREAM_DIR);
-    const fs::path wallet_scenario = GetEnvPath("BIN_WALLET_SCENARIO", DEFAULT_BIN_WALLET_SCENARIO);
-    const std::size_t scan_max_blocks = GetEnvSizeT("BIN_SCAN_MAX_BLOCKS", 1000);
-
-    std::cout << "[Fuse12ClientQuery] Building Fuse12 filters for " << scan_max_blocks << " blocks (streaming)..." << std::endl;
-    const std::vector<FilterBench::BinChunkMeta> chunk_metas = FilterBench::LoadBinChunkMetas(bin_dir);
-    const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
-    const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
-
-    auto filters = BuildExperimentalFiltersStreaming<Fuse12Filter, PrebuiltFuse12Data>(chunk_metas, scan_max_blocks);
-
-    const double total_mb = static_cast<double>(filters.total_bytes) / (1024.0 * 1024.0);
-    std::size_t total_matches{0};
-    std::size_t fp_block_bytes{0};
-    for (const PrebuiltFuse12Data& d : filters.data) {
-        Fuse12Filter filter = Fuse12Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
-        if (filter.MatchAny(wallet_scripts)) {
-            ++total_matches;
-            if (scenario.has_ground_truth &&
-                scenario.ground_truth_block_indices.count(d.block_index) == 0) {
-                fp_block_bytes += d.block_size;
-            }
-        }
-    }
-    const double fp_block_mb = static_cast<double>(fp_block_bytes) / (1024.0 * 1024.0);
-    std::cout << "[Fuse12ClientQuery] " << filters.data.size() << " Fuse12 filters"
-              << " (skipped " << filters.skipped_small << " small, "
-              << filters.construction_failures << " failed)"
-              << ", total=" << filters.total_bytes << " bytes (" << total_mb << " MB)"
-              << ", avg=" << (filters.data.empty() ? 0 : filters.total_bytes / filters.data.size()) << " bytes/filter"
-              << ", matches=" << total_matches
-              << ", fp_block_download=" << fp_block_mb << " MB"
-              << std::endl;
-
-    bench.name("ResearchFuse12ClientSideQuery");
-    bench.run([&] {
-        std::size_t match_count{0};
-        for (const PrebuiltFuse12Data& d : filters.data) {
-            Fuse12Filter filter = Fuse12Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
-            if (filter.MatchAny(wallet_scripts)) {
-                ++match_count;
-            }
-        }
-        ankerl::nanobench::doNotOptimizeAway(match_count);
-    });
-}
-
-static void ResearchFuse18ClientSideQuery(benchmark::Bench& bench)
-{
-    const fs::path bin_dir = GetEnvPath("HIER_BIN_DIR", DEFAULT_BIN_STREAM_DIR);
-    const fs::path wallet_scenario = GetEnvPath("BIN_WALLET_SCENARIO", DEFAULT_BIN_WALLET_SCENARIO);
-    const std::size_t scan_max_blocks = GetEnvSizeT("BIN_SCAN_MAX_BLOCKS", 1000);
-
-    std::cout << "[Fuse18ClientQuery] Building Fuse18 filters for " << scan_max_blocks << " blocks (streaming)..." << std::endl;
-    const std::vector<FilterBench::BinChunkMeta> chunk_metas = FilterBench::LoadBinChunkMetas(bin_dir);
-    const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
-    const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
-
-    auto filters = BuildExperimentalFiltersStreaming<Fuse18Filter, PrebuiltFuse18Data>(chunk_metas, scan_max_blocks);
-
-    const double total_mb = static_cast<double>(filters.total_bytes) / (1024.0 * 1024.0);
-    std::size_t total_matches{0};
-    std::size_t fp_block_bytes{0};
-    for (const PrebuiltFuse18Data& d : filters.data) {
-        Fuse18Filter filter = Fuse18Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
-        if (filter.MatchAny(wallet_scripts)) {
-            ++total_matches;
-            if (scenario.has_ground_truth &&
-                scenario.ground_truth_block_indices.count(d.block_index) == 0) {
-                fp_block_bytes += d.block_size;
-            }
-        }
-    }
-    const double fp_block_mb = static_cast<double>(fp_block_bytes) / (1024.0 * 1024.0);
-    std::cout << "[Fuse18ClientQuery] " << filters.data.size() << " Fuse18 filters"
-              << " (skipped " << filters.skipped_small << " small, "
-              << filters.construction_failures << " failed)"
-              << ", total=" << filters.total_bytes << " bytes (" << total_mb << " MB)"
-              << ", avg=" << (filters.data.empty() ? 0 : filters.total_bytes / filters.data.size()) << " bytes/filter"
-              << ", matches=" << total_matches
-              << ", fp_block_download=" << fp_block_mb << " MB"
-              << std::endl;
-
-    bench.name("ResearchFuse18ClientSideQuery");
-    bench.run([&] {
-        std::size_t match_count{0};
-        for (const PrebuiltFuse18Data& d : filters.data) {
-            Fuse18Filter filter = Fuse18Filter::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
-            if (filter.MatchAny(wallet_scripts)) {
-                ++match_count;
+            InnerFilterT inner = InnerFilterT::Deserialize(p.inner.siphash_k0, p.inner.siphash_k1, p.inner.serialized);
+            for (const auto& candidate : candidates) {
+                if (inner.Match(candidate)) {
+                    ++match_count;
+                    break;
+                }
             }
         }
         ankerl::nanobench::doNotOptimizeAway(match_count);
@@ -1223,475 +900,100 @@ static void ResearchFuse18ClientSideQuery(benchmark::Bench& bench)
 
 static void ResearchFuse12_18(benchmark::Bench& bench)
 {
-    const fs::path bin_dir = GetEnvPath("HIER_BIN_DIR", DEFAULT_BIN_STREAM_DIR);
-    const fs::path wallet_scenario = GetEnvPath("BIN_WALLET_SCENARIO", DEFAULT_BIN_WALLET_SCENARIO);
-    const std::size_t scan_max_blocks = GetEnvSizeT("BIN_SCAN_MAX_BLOCKS", 1000);
-
-    std::cout << "[Hierarchical F12+F18] Building paired filters for " << scan_max_blocks << " blocks..." << std::endl;
-    const std::vector<FilterBench::BinChunkMeta> chunk_metas = FilterBench::LoadBinChunkMetas(bin_dir);
-    const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
-    const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
-
-    // Domain-separation constant for deriving independent inner-layer keys.
     static constexpr uint64_t INNER_DOMAIN_K0 = 0x46757365313849'6EUL; // "Fuse18In"
     static constexpr uint64_t INNER_DOMAIN_K1 = 0x6E65724C617965'72UL; // "nerLayer"
-
-    struct PairedFilters {
-        PrebuiltFuse12Data f12;
-        PrebuiltFuse18Data f18;
-    };
-    std::vector<PairedFilters> paired;
-    std::size_t skipped_small{0};
-    std::size_t construction_failures{0};
-    std::size_t f12_total_bytes{0};
-    std::size_t f18_total_bytes{0};
-
-    if (scan_max_blocks > 0) paired.reserve(scan_max_blocks);
-    std::size_t block_index{0};
-    FilterBench::TxBlockStreamReader reader(chunk_metas, scan_max_blocks);
-    while (reader.HasMore()) {
-        const auto block = reader.ReadNextBlock();
-        const std::size_t cur_index = block_index++;
-        GCSFilter::ElementSet elements = ExtractElementsFromChunkBlock(block);
-        if (elements.size() < 2) { ++skipped_small; continue; }
-
-        const uint64_t k0 = block.block_hash.GetUint64(0);
-        const uint64_t k1 = block.block_hash.GetUint64(1);
-        const uint32_t bsz = block.block_size.value_or(0);
-
-        const uint64_t inner_k0 = CSipHasher(INNER_DOMAIN_K0, INNER_DOMAIN_K1)
-            .Write(k0).Write(k1).Finalize();
-        const uint64_t inner_k1 = CSipHasher(INNER_DOMAIN_K1, INNER_DOMAIN_K0)
-            .Write(k1).Write(k0).Finalize();
-
-        try {
-            Fuse12Filter f12(k0, k1, elements);
-            Fuse18Filter f18(inner_k0, inner_k1, elements);
-            auto ser12 = f12.Serialize();
-            auto ser18 = f18.Serialize();
-            f12_total_bytes += ser12.size();
-            f18_total_bytes += ser18.size();
-            paired.push_back(PairedFilters{
-                PrebuiltFuse12Data{k0, k1, std::move(ser12), bsz, cur_index},
-                PrebuiltFuse18Data{inner_k0, inner_k1, std::move(ser18), bsz, cur_index},
-            });
-        } catch (...) { ++construction_failures; }
-    }
-
-    // One-shot stats pass.
-    std::size_t f12_block_matches{0};
-    std::size_t f18_checks{0};
-    std::size_t final_matches{0};
-    std::size_t total_f12_script_hits{0};
-    std::size_t f18_bandwidth{0};
-    std::size_t fp_block_bytes{0};
-
-    for (const PairedFilters& p : paired) {
-        Fuse12Filter f12 = Fuse12Filter::Deserialize(p.f12.siphash_k0, p.f12.siphash_k1, p.f12.serialized);
-
-        std::vector<Fuse12Filter::Element> candidates;
-        for (const auto& script : wallet_scripts) {
-            if (f12.Match(script)) {
-                candidates.push_back(script);
-            }
-        }
-        if (candidates.empty()) continue;
-
-        ++f12_block_matches;
-        total_f12_script_hits += candidates.size();
-
-        ++f18_checks;
-        f18_bandwidth += p.f18.serialized.size();
-        Fuse18Filter f18 = Fuse18Filter::Deserialize(p.f18.siphash_k0, p.f18.siphash_k1, p.f18.serialized);
-        bool confirmed = false;
-        for (const auto& candidate : candidates) {
-            if (f18.Match(candidate)) {
-                confirmed = true;
-                break;
-            }
-        }
-        if (confirmed) {
-            ++final_matches;
-            if (scenario.has_ground_truth &&
-                scenario.ground_truth_block_indices.count(p.f12.block_index) == 0) {
-                fp_block_bytes += p.f12.block_size;
-            }
-        }
-    }
-
-    const double f12_mb = static_cast<double>(f12_total_bytes) / (1024.0 * 1024.0);
-    const double f18_bw_mb = static_cast<double>(f18_bandwidth) / (1024.0 * 1024.0);
-    const double filter_total_mb = f12_mb + f18_bw_mb;
-    const double fp_block_mb = static_cast<double>(fp_block_bytes) / (1024.0 * 1024.0);
-    std::cout << "[Fuse12+18] " << paired.size() << " paired filters"
-              << " (skipped " << skipped_small << " small, " << construction_failures << " failed)"
-              << ", total_filter=" << filter_total_mb << " MB"
-              << " (F12=" << f12_mb << " MB + F18_ondemand=" << f18_bw_mb << " MB)"
-              << ", matches=" << final_matches
-              << ", f12_block_matches=" << f12_block_matches
-              << ", eliminated=" << (f12_block_matches - final_matches)
-              << ", fp_block_download=" << fp_block_mb << " MB"
-              << std::endl;
-
-    bench.name("ResearchFuse12_18");
-    bench.run([&] {
-        std::size_t match_count{0};
-        for (const PairedFilters& p : paired) {
-            Fuse12Filter f12 = Fuse12Filter::Deserialize(p.f12.siphash_k0, p.f12.siphash_k1, p.f12.serialized);
-
-            std::vector<Fuse12Filter::Element> candidates;
-            for (const auto& script : wallet_scripts) {
-                if (f12.Match(script)) {
-                    candidates.push_back(script);
-                }
-            }
-            if (candidates.empty()) continue;
-
-            Fuse18Filter f18 = Fuse18Filter::Deserialize(p.f18.siphash_k0, p.f18.siphash_k1, p.f18.serialized);
-            for (const auto& candidate : candidates) {
-                if (f18.Match(candidate)) {
-                    ++match_count;
-                    break;
-                }
-            }
-        }
-        ankerl::nanobench::doNotOptimizeAway(match_count);
-    });
+    ResearchHierarchical<Fuse12Filter, Fuse18Filter>(bench, "F12+F18", "ResearchFuse12_18", INNER_DOMAIN_K0, INNER_DOMAIN_K1);
 }
 
 static void ResearchFuse16_20(benchmark::Bench& bench)
 {
-    const fs::path bin_dir = GetEnvPath("HIER_BIN_DIR", DEFAULT_BIN_STREAM_DIR);
-    const fs::path wallet_scenario = GetEnvPath("BIN_WALLET_SCENARIO", DEFAULT_BIN_WALLET_SCENARIO);
-    const std::size_t scan_max_blocks = GetEnvSizeT("BIN_SCAN_MAX_BLOCKS", 1000);
-
-    std::cout << "[Hierarchical F16+F20] Building paired filters for " << scan_max_blocks << " blocks..." << std::endl;
-    const std::vector<FilterBench::BinChunkMeta> chunk_metas = FilterBench::LoadBinChunkMetas(bin_dir);
-    const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
-    const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
-
-    // Domain-separation constant for deriving independent inner-layer keys.
     static constexpr uint64_t INNER_DOMAIN_K0 = 0x46757365323049'6EUL; // "Fuse20In"
     static constexpr uint64_t INNER_DOMAIN_K1 = 0x6E65724C617965'72UL; // "nerLayer"
-
-    // Build paired Fuse16 + Fuse20 in a single streaming pass.
-    // Inner layer uses independently derived SipHash keys.
-    struct PairedFilters {
-        PrebuiltFuse16Data f16;
-        PrebuiltFuse20Data f20;
-    };
-    std::vector<PairedFilters> paired;
-    std::size_t skipped_small{0};
-    std::size_t construction_failures{0};
-    std::size_t f16_total_bytes{0};
-    std::size_t f20_total_bytes{0};
-
-    if (scan_max_blocks > 0) paired.reserve(scan_max_blocks);
-    std::size_t block_index{0};
-    FilterBench::TxBlockStreamReader reader(chunk_metas, scan_max_blocks);
-    while (reader.HasMore()) {
-        const auto block = reader.ReadNextBlock();
-        const std::size_t cur_index = block_index++;
-        GCSFilter::ElementSet elements = ExtractElementsFromChunkBlock(block);
-        if (elements.size() < 2) { ++skipped_small; continue; }
-
-        // Outer layer: keys directly from block hash (same as standalone Fuse16).
-        const uint64_t k0 = block.block_hash.GetUint64(0);
-        const uint64_t k1 = block.block_hash.GetUint64(1);
-        const uint32_t bsz = block.block_size.value_or(0);
-
-        // Inner layer: derive independent keys via SipHash with domain separation.
-        const uint64_t inner_k0 = CSipHasher(INNER_DOMAIN_K0, INNER_DOMAIN_K1)
-            .Write(k0).Write(k1).Finalize();
-        const uint64_t inner_k1 = CSipHasher(INNER_DOMAIN_K1, INNER_DOMAIN_K0)
-            .Write(k1).Write(k0).Finalize();
-
-        try {
-            Fuse16Filter f16(k0, k1, elements);
-            Fuse20Filter f20(inner_k0, inner_k1, elements);
-            auto ser16 = f16.Serialize();
-            auto ser20 = f20.Serialize();
-            f16_total_bytes += ser16.size();
-            f20_total_bytes += ser20.size();
-            paired.push_back(PairedFilters{
-                PrebuiltFuse16Data{k0, k1, std::move(ser16), bsz, cur_index},
-                PrebuiltFuse20Data{inner_k0, inner_k1, std::move(ser20), bsz, cur_index},
-            });
-        } catch (...) { ++construction_failures; }
-    }
-
-    // One-shot pass to measure match/FP stats and bandwidth.
-    // Optimized: Fuse16 checks scripts individually, only candidates
-    // that passed Fuse16 are verified against Fuse20.
-    std::size_t f16_block_matches{0};
-    std::size_t f20_checks{0};
-    std::size_t final_matches{0};
-    std::size_t f20_bandwidth{0};
-    std::size_t total_f16_script_hits{0};
-    std::size_t fp_block_bytes{0};
-    for (const PairedFilters& p : paired) {
-        Fuse16Filter f16 = Fuse16Filter::Deserialize(p.f16.siphash_k0, p.f16.siphash_k1, p.f16.serialized);
-
-        // Check each script individually against Fuse16, collect candidates.
-        std::vector<Fuse16Filter::Element> candidates;
-        for (const auto& script : wallet_scripts) {
-            if (f16.Match(script)) {
-                candidates.push_back(script);
-            }
-        }
-        if (candidates.empty()) continue;
-
-        ++f16_block_matches;
-        total_f16_script_hits += candidates.size();
-
-        // Only download and check Fuse20 for the candidate scripts.
-        ++f20_checks;
-        f20_bandwidth += p.f20.serialized.size();
-        Fuse20Filter f20 = Fuse20Filter::Deserialize(p.f20.siphash_k0, p.f20.siphash_k1, p.f20.serialized);
-        bool confirmed = false;
-        for (const auto& candidate : candidates) {
-            if (f20.Match(candidate)) {
-                confirmed = true;
-                break;
-            }
-        }
-        if (confirmed) {
-            ++final_matches;
-            // If this final match is not in ground truth, it's an FP block download.
-            if (scenario.has_ground_truth &&
-                scenario.ground_truth_block_indices.count(p.f16.block_index) == 0) {
-                fp_block_bytes += p.f16.block_size;
-            }
-        }
-    }
-
-    const double f16_mb = static_cast<double>(f16_total_bytes) / (1024.0 * 1024.0);
-    const double f20_bw_mb = static_cast<double>(f20_bandwidth) / (1024.0 * 1024.0);
-    const double filter_total_mb = f16_mb + f20_bw_mb;
-    const double fp_block_mb = static_cast<double>(fp_block_bytes) / (1024.0 * 1024.0);
-    std::cout << "[Fuse16+20] " << paired.size() << " paired filters"
-              << " (skipped " << skipped_small << " small, " << construction_failures << " failed)"
-              << ", total_filter=" << filter_total_mb << " MB"
-              << " (F16=" << f16_mb << " MB + F20_ondemand=" << f20_bw_mb << " MB)"
-              << ", matches=" << final_matches
-              << ", f16_block_matches=" << f16_block_matches
-              << ", eliminated=" << (f16_block_matches - final_matches)
-              << ", fp_block_download=" << fp_block_mb << " MB"
-              << std::endl;
-
-    bench.name("ResearchFuse16_20");
-    bench.run([&] {
-        std::size_t match_count{0};
-        for (const PairedFilters& p : paired) {
-            Fuse16Filter f16 = Fuse16Filter::Deserialize(p.f16.siphash_k0, p.f16.siphash_k1, p.f16.serialized);
-
-            // Fuse16: check each script, collect candidates.
-            std::vector<Fuse16Filter::Element> candidates;
-            for (const auto& script : wallet_scripts) {
-                if (f16.Match(script)) {
-                    candidates.push_back(script);
-                }
-            }
-            if (candidates.empty()) continue;
-
-            // Fuse20: only verify the Fuse16 candidates.
-            Fuse20Filter f20 = Fuse20Filter::Deserialize(p.f20.siphash_k0, p.f20.siphash_k1, p.f20.serialized);
-            for (const auto& candidate : candidates) {
-                if (f20.Match(candidate)) {
-                    ++match_count;
-                    break;
-                }
-            }
-        }
-        ankerl::nanobench::doNotOptimizeAway(match_count);
-    });
+    ResearchHierarchical<Fuse16Filter, Fuse20Filter>(bench, "F16+F20", "ResearchFuse16_20", INNER_DOMAIN_K0, INNER_DOMAIN_K1);
 }
 
 // ============================================================================
-// Unified benchmark: single I/O pass, all filters × all wallets.
+// Unified benchmark: single I/O pass, all filters x all wallets.
+// Memory-efficient: builds and evaluates all filters per block, then discards.
+// No blocks vector is kept; timing loops re-stream from disk.
 // ============================================================================
 
-// Per-block data holding all prebuilt filter types.
-struct UnifiedBlockData {
-    std::size_t block_index;
-    uint32_t block_size;
-    // GCS
-    GCSFilter::Params gcs_params;
-    std::vector<unsigned char> gcs_encoded;
-    // Common SipHash keys from block hash.
-    uint64_t k0, k1;
-    // Flat / outer-layer serialized filters (original k0/k1).
-    std::vector<unsigned char> f16_ser;
-    std::vector<unsigned char> f12_ser;
-    std::vector<unsigned char> f10_ser;
-    std::vector<unsigned char> f18_flat_ser;
-    std::vector<unsigned char> f20_flat_ser;
-    // Fuse8 outer-layer serialized filter (original k0/k1).
-    std::vector<unsigned char> f8_ser;
-    // Inner-layer serialized filters (domain-separated keys).
-    uint64_t f10i_k0, f10i_k1;
-    std::vector<unsigned char> f10i_ser;
-    uint64_t f12i_k0, f12i_k1;
-    std::vector<unsigned char> f12i_ser;
-    uint64_t f16i_k0, f16i_k1;
-    std::vector<unsigned char> f16i_ser;
-    uint64_t f18_k0, f18_k1;
-    std::vector<unsigned char> f18_ser;
-    uint64_t f20_k0, f20_k1;
-    std::vector<unsigned char> f20_ser;
-    // Domain-separated GCS inner filter for Fuse+GCS hierarchical variants.
-    GCSFilter::Params gcsi_params;
-    std::vector<unsigned char> gcsi_encoded;
+// Filter configurations evaluated in the unified benchmark.
+enum FilterConfig {
+    CFG_GCS = 0,
+    CFG_F16,
+    CFG_F18,
+    CFG_F20,
+    CFG_F16_20,
+    CFG_F10_10,
+    CFG_F12_12,
+    CFG_F12_16,
+    CFG_F12_18,
+    CFG_F8_GCS,
+    CFG_F12_GCS,
+    CFG_F16_GCS,
+    NUM_CONFIGS
+};
+
+static constexpr const char* CONFIG_NAMES[NUM_CONFIGS] = {
+    "GCS", "F16", "F18", "F20", "F16+20", "F10+10", "F12+12", "F12+16", "F12+18", "F8+GCS", "F12+GCS", "F16+GCS"
 };
 
 // Running stats accumulated per wallet during the streaming build+eval pass.
 struct WalletRunningStats {
-    std::size_t gcs_matches{0}, gcs_block_dl_bytes{0};
-    std::size_t f16_matches{0}, f16_block_dl_bytes{0};
-    std::size_t f18_matches{0}, f18_block_dl_bytes{0};
-    std::size_t f20_matches{0}, f20_block_dl_bytes{0};
-    std::size_t f1620_f16_hits{0}, f1620_matches{0}, f1620_f20_bw{0}, f1620_block_dl_bytes{0};
-    std::size_t f1010_f10_hits{0}, f1010_matches{0}, f1010_f10i_bw{0}, f1010_block_dl_bytes{0};
-    std::size_t f1212_f12_hits{0}, f1212_matches{0}, f1212_f12i_bw{0}, f1212_block_dl_bytes{0};
-    std::size_t f1216_f12_hits{0}, f1216_matches{0}, f1216_f16_bw{0}, f1216_block_dl_bytes{0};
-    std::size_t f1218_f12_hits{0}, f1218_matches{0}, f1218_f18_bw{0}, f1218_block_dl_bytes{0};
-    // Fuse+GCS hierarchical variants.
-    std::size_t f8gcs_f8_hits{0}, f8gcs_matches{0}, f8gcs_gcsi_bw{0}, f8gcs_block_dl_bytes{0};
-    std::size_t f12gcs_f12_hits{0}, f12gcs_matches{0}, f12gcs_gcsi_bw{0}, f12gcs_block_dl_bytes{0};
-    std::size_t f16gcs_f16_hits{0}, f16gcs_matches{0}, f16gcs_gcsi_bw{0}, f16gcs_block_dl_bytes{0};
-    // Cumulative query time in nanoseconds per filter type.
-    int64_t gcs_ns{0}, f16_ns{0}, f18_ns{0}, f20_ns{0}, f1620_ns{0}, f1010_ns{0}, f1212_ns{0}, f1216_ns{0}, f1218_ns{0};
-    int64_t f8gcs_ns{0}, f12gcs_ns{0}, f16gcs_ns{0};
-    // Ground truth hits seen so far.
+    std::array<std::size_t, NUM_CONFIGS> matches{};
+    std::array<std::size_t, NUM_CONFIGS> block_dl_bytes{};
+    std::array<int64_t, NUM_CONFIGS> ns{};
+    // Hierarchical-specific: outer layer hits and inner bandwidth.
+    std::array<std::size_t, NUM_CONFIGS> outer_hits{};
+    std::array<std::size_t, NUM_CONFIGS> inner_bw{};
     std::size_t gt_count{0};
 };
 
-[[nodiscard]] static std::vector<WalletScenarioData> LoadAllWalletScenarios(const fs::path& wallet_dir)
-{
-    std::vector<WalletScenarioData> wallets;
-    for (const auto& entry : fs::directory_iterator(wallet_dir)) {
-        if (!entry.is_regular_file()) continue;
-        if (entry.path().extension() != ".json") continue;
-        const std::string stem = fs::PathToString(entry.path().stem());
-        if (stem.find("wallet_use_case_") != 0) continue;
-        try {
-            wallets.push_back(LoadWalletScenarioData(entry.path()));
-        } catch (const std::exception& e) {
-            std::cerr << "WARNING: failed to load wallet " << fs::PathToString(entry.path())
-                      << ": " << e.what() << std::endl;
-        }
-    }
-    std::sort(wallets.begin(), wallets.end(), [](const WalletScenarioData& a, const WalletScenarioData& b) {
-        return a.wallet_scripts.size() < b.wallet_scripts.size();
-    });
-    if (wallets.empty()) {
-        throw std::runtime_error("no wallet scenarios found in " + fs::PathToString(wallet_dir));
-    }
-    return wallets;
+// Domain-separation constants for hierarchical inner layers.
+static constexpr uint64_t F10_INNER_DOMAIN_K0 = 0x46757365313049'6EUL; // "Fuse10In"
+static constexpr uint64_t F10_INNER_DOMAIN_K1 = 0x6E65724C617965'72UL; // "nerLayer"
+static constexpr uint64_t F12_INNER_DOMAIN_K0 = 0x46757365313249'6EUL; // "Fuse12In"
+static constexpr uint64_t F12_INNER_DOMAIN_K1 = 0x6E65724C617965'72UL; // "nerLayer"
+static constexpr uint64_t F16_INNER_DOMAIN_K0 = 0x46757365313649'6EUL; // "Fuse16In"
+static constexpr uint64_t F16_INNER_DOMAIN_K1 = 0x6E65724C617965'72UL; // "nerLayer"
+static constexpr uint64_t F18_DOMAIN_K0 = 0x46757365313849'6EUL; // "Fuse18In"
+static constexpr uint64_t F18_DOMAIN_K1 = 0x6E65724C617965'72UL; // "nerLayer"
+static constexpr uint64_t F20_DOMAIN_K0 = 0x46757365323049'6EUL; // "Fuse20In"
+static constexpr uint64_t F20_DOMAIN_K1 = 0x6E65724C617965'72UL; // "nerLayer"
+static constexpr uint64_t GCS_INNER_DOMAIN_K0 = 0x474353496E6E65'72UL; // "GCSInner"
+static constexpr uint64_t GCS_INNER_DOMAIN_K1 = 0x4C617965724B65'79UL; // "LayerKey"
+
+static inline uint64_t DeriveInnerK0(uint64_t domain_k0, uint64_t domain_k1, uint64_t k0, uint64_t k1) {
+    return CSipHasher(domain_k0, domain_k1).Write(k0).Write(k1).Finalize();
+}
+static inline uint64_t DeriveInnerK1(uint64_t domain_k0, uint64_t domain_k1, uint64_t k0, uint64_t k1) {
+    return CSipHasher(domain_k1, domain_k0).Write(k1).Write(k0).Finalize();
 }
 
-// Precompute short wallet names for display.
-[[nodiscard]] static std::vector<std::string> MakeShortNames(const std::vector<WalletScenarioData>& wallets)
-{
-    std::vector<std::string> names;
-    names.reserve(wallets.size());
-    const std::string pfx = "wallet_use_case_";
-    for (const auto& w : wallets) {
-        std::string n = w.scenario_id;
-        if (n.find(pfx) == 0) n = n.substr(pfx.size());
-        names.push_back(std::move(n));
-    }
-    return names;
-}
-
-// Print a compact intermediate report to stdout.
 static void PrintProgressReport(
     std::size_t n_blocks,
     const std::vector<WalletScenarioData>& wallets,
     const std::vector<std::string>& short_names,
     const std::vector<WalletRunningStats>& stats,
-    double gcs_mb, double f16_mb, double f18_flat_mb, double f20_flat_mb, double f12_mb, double f10_mb, double f8_mb)
+    const std::array<double, NUM_CONFIGS>& filter_mb)
 {
     std::cout << "\n=== " << n_blocks << " blocks ===\n";
     for (std::size_t wi = 0; wi < wallets.size(); ++wi) {
         const auto& ws = stats[wi];
-        const std::size_t gcs_fp = ws.gcs_matches > ws.gt_count ? ws.gcs_matches - ws.gt_count : 0;
-        const std::size_t f16_fp = ws.f16_matches > ws.gt_count ? ws.f16_matches - ws.gt_count : 0;
-        const std::size_t f18_fp = ws.f18_matches > ws.gt_count ? ws.f18_matches - ws.gt_count : 0;
-        const std::size_t f20_fp = ws.f20_matches > ws.gt_count ? ws.f20_matches - ws.gt_count : 0;
-        const std::size_t f1620_fp = ws.f1620_matches > ws.gt_count ? ws.f1620_matches - ws.gt_count : 0;
-        const std::size_t f1010_fp = ws.f1010_matches > ws.gt_count ? ws.f1010_matches - ws.gt_count : 0;
-        const std::size_t f1212_fp = ws.f1212_matches > ws.gt_count ? ws.f1212_matches - ws.gt_count : 0;
-        const std::size_t f1216_fp = ws.f1216_matches > ws.gt_count ? ws.f1216_matches - ws.gt_count : 0;
-        const std::size_t f1218_fp = ws.f1218_matches > ws.gt_count ? ws.f1218_matches - ws.gt_count : 0;
-        const std::size_t f8gcs_fp = ws.f8gcs_matches > ws.gt_count ? ws.f8gcs_matches - ws.gt_count : 0;
-        const std::size_t f12gcs_fp = ws.f12gcs_matches > ws.gt_count ? ws.f12gcs_matches - ws.gt_count : 0;
-        const std::size_t f16gcs_fp = ws.f16gcs_matches > ws.gt_count ? ws.f16gcs_matches - ws.gt_count : 0;
-
-        // Total bandwidth = filter_download + inner_on_demand + block_download (all in MB).
-        const double gcs_total_mb = gcs_mb + static_cast<double>(ws.gcs_block_dl_bytes) / (1024.0 * 1024.0);
-        const double f16_total_mb = f16_mb + static_cast<double>(ws.f16_block_dl_bytes) / (1024.0 * 1024.0);
-        const double f18_total_mb = f18_flat_mb + static_cast<double>(ws.f18_block_dl_bytes) / (1024.0 * 1024.0);
-        const double f20_total_mb = f20_flat_mb + static_cast<double>(ws.f20_block_dl_bytes) / (1024.0 * 1024.0);
-        const double f1620_total_mb = f16_mb
-            + static_cast<double>(ws.f1620_f20_bw) / (1024.0 * 1024.0)
-            + static_cast<double>(ws.f1620_block_dl_bytes) / (1024.0 * 1024.0);
-        const double f1010_total_mb = f10_mb
-            + static_cast<double>(ws.f1010_f10i_bw) / (1024.0 * 1024.0)
-            + static_cast<double>(ws.f1010_block_dl_bytes) / (1024.0 * 1024.0);
-        const double f1212_total_mb = f12_mb
-            + static_cast<double>(ws.f1212_f12i_bw) / (1024.0 * 1024.0)
-            + static_cast<double>(ws.f1212_block_dl_bytes) / (1024.0 * 1024.0);
-        const double f1216_total_mb = f12_mb
-            + static_cast<double>(ws.f1216_f16_bw) / (1024.0 * 1024.0)
-            + static_cast<double>(ws.f1216_block_dl_bytes) / (1024.0 * 1024.0);
-        const double f1218_total_mb = f12_mb
-            + static_cast<double>(ws.f1218_f18_bw) / (1024.0 * 1024.0)
-            + static_cast<double>(ws.f1218_block_dl_bytes) / (1024.0 * 1024.0);
-        const double f8gcs_total_mb = f8_mb
-            + static_cast<double>(ws.f8gcs_gcsi_bw) / (1024.0 * 1024.0)
-            + static_cast<double>(ws.f8gcs_block_dl_bytes) / (1024.0 * 1024.0);
-        const double f12gcs_total_mb = f12_mb
-            + static_cast<double>(ws.f12gcs_gcsi_bw) / (1024.0 * 1024.0)
-            + static_cast<double>(ws.f12gcs_block_dl_bytes) / (1024.0 * 1024.0);
-        const double f16gcs_total_mb = f16_mb
-            + static_cast<double>(ws.f16gcs_gcsi_bw) / (1024.0 * 1024.0)
-            + static_cast<double>(ws.f16gcs_block_dl_bytes) / (1024.0 * 1024.0);
-
-        const double gcs_ms = static_cast<double>(ws.gcs_ns) / 1e6;
-        const double f16_ms = static_cast<double>(ws.f16_ns) / 1e6;
-        const double f18_ms = static_cast<double>(ws.f18_ns) / 1e6;
-        const double f20_ms = static_cast<double>(ws.f20_ns) / 1e6;
-        const double f1620_ms = static_cast<double>(ws.f1620_ns) / 1e6;
-        const double f1010_ms = static_cast<double>(ws.f1010_ns) / 1e6;
-        const double f1212_ms = static_cast<double>(ws.f1212_ns) / 1e6;
-        const double f1216_ms = static_cast<double>(ws.f1216_ns) / 1e6;
-        const double f1218_ms = static_cast<double>(ws.f1218_ns) / 1e6;
-        const double f8gcs_ms = static_cast<double>(ws.f8gcs_ns) / 1e6;
-        const double f12gcs_ms = static_cast<double>(ws.f12gcs_ns) / 1e6;
-        const double f16gcs_ms = static_cast<double>(ws.f16gcs_ns) / 1e6;
-
-        char buf[1600];
-        std::snprintf(buf, sizeof(buf),
-            "  %-20s(%3zu): GCS=(%.1fms %.1fMB FP=%zu) F16=(%.1fms %.1fMB FP=%zu) "
-            "F18=(%.1fms %.1fMB FP=%zu) F20=(%.1fms %.1fMB FP=%zu) "
-            "F16+20=(%.1fms %.1fMB FP=%zu) F10+10=(%.1fms %.1fMB FP=%zu) F12+12=(%.1fms %.1fMB FP=%zu) "
-            "F12+16=(%.1fms %.1fMB FP=%zu) F12+18=(%.1fms %.1fMB FP=%zu) "
-            "F8+GCS=(%.1fms %.1fMB FP=%zu) F12+GCS=(%.1fms %.1fMB FP=%zu) F16+GCS=(%.1fms %.1fMB FP=%zu)",
-            short_names[wi].c_str(), wallets[wi].wallet_scripts.size(),
-            gcs_ms, gcs_total_mb, gcs_fp,
-            f16_ms, f16_total_mb, f16_fp,
-            f18_ms, f18_total_mb, f18_fp,
-            f20_ms, f20_total_mb, f20_fp,
-            f1620_ms, f1620_total_mb, f1620_fp,
-            f1010_ms, f1010_total_mb, f1010_fp,
-            f1212_ms, f1212_total_mb, f1212_fp,
-            f1216_ms, f1216_total_mb, f1216_fp,
-            f1218_ms, f1218_total_mb, f1218_fp,
-            f8gcs_ms, f8gcs_total_mb, f8gcs_fp,
-            f12gcs_ms, f12gcs_total_mb, f12gcs_fp,
-            f16gcs_ms, f16gcs_total_mb, f16gcs_fp);
-        std::cout << buf << "\n";
+        std::ostringstream line;
+        line << "  " << short_names[wi] << "(" << wallets[wi].wallet_scripts.size() << "):";
+        for (int c = 0; c < NUM_CONFIGS; ++c) {
+            const std::size_t fp = ws.matches[c] > ws.gt_count ? ws.matches[c] - ws.gt_count : 0;
+            double total_mb_val = filter_mb[c];
+            if (c >= CFG_F16_20) { // hierarchical configs add inner bandwidth
+                total_mb_val += static_cast<double>(ws.inner_bw[c]) / (1024.0 * 1024.0);
+            }
+            total_mb_val += static_cast<double>(ws.block_dl_bytes[c]) / (1024.0 * 1024.0);
+            const double ms = static_cast<double>(ws.ns[c]) / 1e6;
+            line << " " << CONFIG_NAMES[c] << "=(" << ms << "ms " << total_mb_val << "MB FP=" << fp << ")";
+        }
+        std::cout << line.str() << "\n";
     }
     std::cout << std::flush;
 }
@@ -1708,34 +1010,16 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
     const std::vector<std::string> short_names = MakeShortNames(wallets);
     std::cout << "[AllFilters] Loaded " << wallets.size() << " wallet scenarios" << std::endl;
 
-    // Domain-separation constants for hierarchical inner layers.
-    static constexpr uint64_t F10_INNER_DOMAIN_K0 = 0x46757365313049'6EUL; // "Fuse10In"
-    static constexpr uint64_t F10_INNER_DOMAIN_K1 = 0x6E65724C617965'72UL; // "nerLayer"
-    static constexpr uint64_t F12_INNER_DOMAIN_K0 = 0x46757365313249'6EUL; // "Fuse12In"
-    static constexpr uint64_t F12_INNER_DOMAIN_K1 = 0x6E65724C617965'72UL; // "nerLayer"
-    static constexpr uint64_t F16_INNER_DOMAIN_K0 = 0x46757365313649'6EUL; // "Fuse16In"
-    static constexpr uint64_t F16_INNER_DOMAIN_K1 = 0x6E65724C617965'72UL; // "nerLayer"
-    static constexpr uint64_t F18_DOMAIN_K0 = 0x46757365313849'6EUL; // "Fuse18In"
-    static constexpr uint64_t F18_DOMAIN_K1 = 0x6E65724C617965'72UL; // "nerLayer"
-    static constexpr uint64_t F20_DOMAIN_K0 = 0x46757365323049'6EUL; // "Fuse20In"
-    static constexpr uint64_t F20_DOMAIN_K1 = 0x6E65724C617965'72UL; // "nerLayer"
-    static constexpr uint64_t GCS_INNER_DOMAIN_K0 = 0x474353496E6E65'72UL; // "GCSInner"
-    static constexpr uint64_t GCS_INNER_DOMAIN_K1 = 0x4C617965724B65'79UL; // "LayerKey"
-
-    // === SINGLE STREAMING PASS: build filters + evaluate all wallets per block ===
+    // === STREAMING STATS PASS: build filters + evaluate all wallets per block, then discard ===
     std::cout << "[AllFilters] Building & evaluating all filters for " << scan_max_blocks << " blocks...\n";
     const auto chunk_metas = FilterBench::LoadBinChunkMetas(bin_dir);
-
-    std::vector<UnifiedBlockData> blocks;
-    if (scan_max_blocks > 0) blocks.reserve(scan_max_blocks);
 
     std::vector<WalletRunningStats> wallet_stats(wallets.size());
 
     std::size_t skipped_small{0}, construction_failures{0};
-    std::size_t gcs_bytes{0}, f16_bytes{0}, f12_bytes{0}, f10_bytes{0}, f18_flat_bytes{0}, f20_flat_bytes{0};
-    std::size_t f8_bytes{0}, gcsi_bytes{0};
-    std::size_t f10i_bytes{0}, f12i_bytes{0}, f16i_bytes{0}, f18_bytes{0}, f20_bytes{0};
+    std::array<std::size_t, NUM_CONFIGS> filter_bytes{};
     std::size_t total_block_index{0};
+    std::size_t blocks_processed{0};
 
     constexpr std::size_t DOTS_PER_LINE = 50;
     constexpr std::size_t REPORT_INTERVAL = 500;
@@ -1768,71 +1052,65 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
         const uint64_t k1 = block.block_hash.GetUint64(1);
         const uint32_t bsz = block.block_size.value_or(0);
 
-        const uint64_t f10i_k0 = CSipHasher(F10_INNER_DOMAIN_K0, F10_INNER_DOMAIN_K1).Write(k0).Write(k1).Finalize();
-        const uint64_t f10i_k1 = CSipHasher(F10_INNER_DOMAIN_K1, F10_INNER_DOMAIN_K0).Write(k1).Write(k0).Finalize();
-        const uint64_t f12i_k0 = CSipHasher(F12_INNER_DOMAIN_K0, F12_INNER_DOMAIN_K1).Write(k0).Write(k1).Finalize();
-        const uint64_t f12i_k1 = CSipHasher(F12_INNER_DOMAIN_K1, F12_INNER_DOMAIN_K0).Write(k1).Write(k0).Finalize();
-        const uint64_t f16i_k0 = CSipHasher(F16_INNER_DOMAIN_K0, F16_INNER_DOMAIN_K1).Write(k0).Write(k1).Finalize();
-        const uint64_t f16i_k1 = CSipHasher(F16_INNER_DOMAIN_K1, F16_INNER_DOMAIN_K0).Write(k1).Write(k0).Finalize();
-        const uint64_t f18_k0 = CSipHasher(F18_DOMAIN_K0, F18_DOMAIN_K1).Write(k0).Write(k1).Finalize();
-        const uint64_t f18_k1 = CSipHasher(F18_DOMAIN_K1, F18_DOMAIN_K0).Write(k1).Write(k0).Finalize();
-        const uint64_t f20_k0 = CSipHasher(F20_DOMAIN_K0, F20_DOMAIN_K1).Write(k0).Write(k1).Finalize();
-        const uint64_t f20_k1 = CSipHasher(F20_DOMAIN_K1, F20_DOMAIN_K0).Write(k1).Write(k0).Finalize();
-        const uint64_t gcsi_k0 = CSipHasher(GCS_INNER_DOMAIN_K0, GCS_INNER_DOMAIN_K1).Write(k0).Write(k1).Finalize();
-        const uint64_t gcsi_k1 = CSipHasher(GCS_INNER_DOMAIN_K1, GCS_INNER_DOMAIN_K0).Write(k1).Write(k0).Finalize();
+        const uint64_t f10i_k0 = DeriveInnerK0(F10_INNER_DOMAIN_K0, F10_INNER_DOMAIN_K1, k0, k1);
+        const uint64_t f10i_k1 = DeriveInnerK1(F10_INNER_DOMAIN_K0, F10_INNER_DOMAIN_K1, k0, k1);
+        const uint64_t f12i_k0 = DeriveInnerK0(F12_INNER_DOMAIN_K0, F12_INNER_DOMAIN_K1, k0, k1);
+        const uint64_t f12i_k1 = DeriveInnerK1(F12_INNER_DOMAIN_K0, F12_INNER_DOMAIN_K1, k0, k1);
+        const uint64_t f16i_k0 = DeriveInnerK0(F16_INNER_DOMAIN_K0, F16_INNER_DOMAIN_K1, k0, k1);
+        const uint64_t f16i_k1 = DeriveInnerK1(F16_INNER_DOMAIN_K0, F16_INNER_DOMAIN_K1, k0, k1);
+        const uint64_t f18_k0  = DeriveInnerK0(F18_DOMAIN_K0, F18_DOMAIN_K1, k0, k1);
+        const uint64_t f18_k1  = DeriveInnerK1(F18_DOMAIN_K0, F18_DOMAIN_K1, k0, k1);
+        const uint64_t f20_k0  = DeriveInnerK0(F20_DOMAIN_K0, F20_DOMAIN_K1, k0, k1);
+        const uint64_t f20_k1  = DeriveInnerK1(F20_DOMAIN_K0, F20_DOMAIN_K1, k0, k1);
+        const uint64_t gcsi_k0 = DeriveInnerK0(GCS_INNER_DOMAIN_K0, GCS_INNER_DOMAIN_K1, k0, k1);
+        const uint64_t gcsi_k1 = DeriveInnerK1(GCS_INNER_DOMAIN_K0, GCS_INNER_DOMAIN_K1, k0, k1);
 
         try {
+            // Build all filters for this block.
             GCSFilter::Params gcs_params(k0, k1, BASIC_FILTER_P, BASIC_FILTER_M);
             GCSFilter gcs_filter(gcs_params, elements);
-            auto gcs_enc = gcs_filter.GetEncoded();
 
             Fuse16Filter f16(k0, k1, elements);
             Fuse18Filter f18_flat(k0, k1, elements);
             Fuse20Filter f20_flat(k0, k1, elements);
             Fuse12Filter f12(k0, k1, elements);
             Fuse10Filter f10(k0, k1, elements);
-            Fuse10Filter f10i(f10i_k0, f10i_k1, elements); // inner F10 (domain-separated)
-            Fuse12Filter f12i(f12i_k0, f12i_k1, elements); // inner F12 (domain-separated)
-            Fuse16Filter f16i(f16i_k0, f16i_k1, elements); // inner F16 (domain-separated)
+            Fuse10Filter f10i(f10i_k0, f10i_k1, elements);
+            Fuse12Filter f12i(f12i_k0, f12i_k1, elements);
+            Fuse16Filter f16i(f16i_k0, f16i_k1, elements);
             Fuse18Filter f18(f18_k0, f18_k1, elements);
             Fuse20Filter f20(f20_k0, f20_k1, elements);
             Fuse8Filter f8(k0, k1, elements);
             GCSFilter::Params gcsi_params(gcsi_k0, gcsi_k1, BASIC_FILTER_P, BASIC_FILTER_M);
             GCSFilter gcsi_filter(gcsi_params, elements);
 
-            auto f16_s = f16.Serialize();
-            auto f18_flat_s = f18_flat.Serialize();
-            auto f20_flat_s = f20_flat.Serialize();
-            auto f12_s = f12.Serialize();
-            auto f10_s = f10.Serialize();
-            auto f10i_s = f10i.Serialize();
-            auto f12i_s = f12i.Serialize();
-            auto f16i_s = f16i.Serialize();
-            auto f18_s = f18.Serialize();
-            auto f20_s = f20.Serialize();
-            auto f8_s = f8.Serialize();
-            auto gcsi_enc = gcsi_filter.GetEncoded();
+            // Accumulate filter size stats.
+            const std::size_t gcs_sz = gcs_filter.GetEncoded().size();
+            const std::size_t f16_sz = f16.SerializedSize();
+            const std::size_t f18_flat_sz = f18_flat.SerializedSize();
+            const std::size_t f20_flat_sz = f20_flat.SerializedSize();
+            const std::size_t f12_sz = f12.SerializedSize();
+            const std::size_t f10_sz = f10.SerializedSize();
+            const std::size_t f10i_sz = f10i.SerializedSize();
+            const std::size_t f12i_sz = f12i.SerializedSize();
+            const std::size_t f16i_sz = f16i.SerializedSize();
+            const std::size_t f18_sz = f18.SerializedSize();
+            const std::size_t f20_sz = f20.SerializedSize();
+            const std::size_t f8_sz = f8.SerializedSize();
+            const std::size_t gcsi_sz = gcsi_filter.GetEncoded().size();
 
-            gcs_bytes += gcs_enc.size();
-            f16_bytes += f16_s.size();
-            f18_flat_bytes += f18_flat_s.size();
-            f20_flat_bytes += f20_flat_s.size();
-            f12_bytes += f12_s.size();
-            f10_bytes += f10_s.size();
-            f10i_bytes += f10i_s.size();
-            f12i_bytes += f12i_s.size();
-            f16i_bytes += f16i_s.size();
-            f18_bytes += f18_s.size();
-            f20_bytes += f20_s.size();
-            f8_bytes += f8_s.size();
-            gcsi_bytes += gcsi_enc.size();
-
-            const std::size_t f10i_ser_size = f10i_s.size();
-            const std::size_t f12i_ser_size = f12i_s.size();
-            const std::size_t f16i_ser_size = f16i_s.size();
-            const std::size_t f18_ser_size = f18_s.size();
-            const std::size_t f20_ser_size = f20_s.size();
-            const std::size_t gcsi_ser_size = gcsi_enc.size();
+            filter_bytes[CFG_GCS] += gcs_sz;
+            filter_bytes[CFG_F16] += f16_sz;
+            filter_bytes[CFG_F18] += f18_flat_sz;
+            filter_bytes[CFG_F20] += f20_flat_sz;
+            filter_bytes[CFG_F16_20] += f16_sz; // outer = F16
+            filter_bytes[CFG_F10_10] += f10_sz;
+            filter_bytes[CFG_F12_12] += f12_sz;
+            filter_bytes[CFG_F12_16] += f12_sz;
+            filter_bytes[CFG_F12_18] += f12_sz;
+            filter_bytes[CFG_F8_GCS] += f8_sz;
+            filter_bytes[CFG_F12_GCS] += f12_sz;
+            filter_bytes[CFG_F16_GCS] += f16_sz;
 
             // --- Evaluate this block against all wallets immediately ---
             for (std::size_t wi = 0; wi < wallets.size(); ++wi) {
@@ -1847,14 +1125,14 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                     const auto t0 = std::chrono::steady_clock::now();
                     const bool hit = gcs_filter.MatchAny(scripts);
                     const auto t1 = std::chrono::steady_clock::now();
-                    ws.gcs_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                    ws.ns[CFG_GCS] += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
                     if (hit) {
-                        ++ws.gcs_matches;
-                        ws.gcs_block_dl_bytes += bsz;
+                        ++ws.matches[CFG_GCS];
+                        ws.block_dl_bytes[CFG_GCS] += bsz;
                     }
                 }
 
-                // F16 flat + F16+20 hierarchical (single script iteration)
+                // F16 flat + F16+20 hierarchical + F16+GCS hierarchical (single script iteration)
                 {
                     const auto t0 = std::chrono::steady_clock::now();
                     std::vector<Fuse16Filter::Element> f16_cands;
@@ -1862,14 +1140,14 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                         if (f16.Match(s)) f16_cands.push_back(s);
                     }
                     const auto t1 = std::chrono::steady_clock::now();
-                    ws.f16_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                    ws.ns[CFG_F16] += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
 
                     if (!f16_cands.empty()) {
-                        ++ws.f16_matches;
-                        ws.f16_block_dl_bytes += bsz;
+                        ++ws.matches[CFG_F16];
+                        ws.block_dl_bytes[CFG_F16] += bsz;
 
-                        ++ws.f1620_f16_hits;
-                        ws.f1620_f20_bw += f20_ser_size;
+                        ++ws.outer_hits[CFG_F16_20];
+                        ws.inner_bw[CFG_F16_20] += f20_sz;
 
                         const auto t2 = std::chrono::steady_clock::now();
                         bool f20_hit = false;
@@ -1877,16 +1155,15 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                             if (f20.Match(c)) { f20_hit = true; break; }
                         }
                         const auto t3 = std::chrono::steady_clock::now();
-                        // F16+20 time = F16 scan + F20 verification.
-                        ws.f1620_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count()
-                                     + std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
+                        ws.ns[CFG_F16_20] += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count()
+                                           + std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
                         if (f20_hit) {
-                            ++ws.f1620_matches;
-                            ws.f1620_block_dl_bytes += bsz;
+                            ++ws.matches[CFG_F16_20];
+                            ws.block_dl_bytes[CFG_F16_20] += bsz;
                         }
                         // F16+GCS hierarchical (reuse f16_cands)
-                        ++ws.f16gcs_f16_hits;
-                        ws.f16gcs_gcsi_bw += gcsi_ser_size;
+                        ++ws.outer_hits[CFG_F16_GCS];
+                        ws.inner_bw[CFG_F16_GCS] += gcsi_sz;
                         {
                             const auto t4 = std::chrono::steady_clock::now();
                             bool gcsi_hit = false;
@@ -1894,17 +1171,16 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                                 if (gcsi_filter.Match(c)) { gcsi_hit = true; break; }
                             }
                             const auto t5 = std::chrono::steady_clock::now();
-                            ws.f16gcs_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count()
-                                          + std::chrono::duration_cast<std::chrono::nanoseconds>(t5 - t4).count();
+                            ws.ns[CFG_F16_GCS] += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count()
+                                                + std::chrono::duration_cast<std::chrono::nanoseconds>(t5 - t4).count();
                             if (gcsi_hit) {
-                                ++ws.f16gcs_matches;
-                                ws.f16gcs_block_dl_bytes += bsz;
+                                ++ws.matches[CFG_F16_GCS];
+                                ws.block_dl_bytes[CFG_F16_GCS] += bsz;
                             }
                         }
                     } else {
-                        // No F16 hit => F16+20 and F16+GCS only paid the F16 scan cost.
-                        ws.f1620_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
-                        ws.f16gcs_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                        ws.ns[CFG_F16_20] += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                        ws.ns[CFG_F16_GCS] += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
                     }
                 }
 
@@ -1913,10 +1189,10 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                     const auto t0 = std::chrono::steady_clock::now();
                     bool hit = f18_flat.MatchAny(scripts);
                     const auto t1 = std::chrono::steady_clock::now();
-                    ws.f18_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                    ws.ns[CFG_F18] += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
                     if (hit) {
-                        ++ws.f18_matches;
-                        ws.f18_block_dl_bytes += bsz;
+                        ++ws.matches[CFG_F18];
+                        ws.block_dl_bytes[CFG_F18] += bsz;
                     }
                 }
 
@@ -1925,10 +1201,10 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                     const auto t0 = std::chrono::steady_clock::now();
                     bool hit = f20_flat.MatchAny(scripts);
                     const auto t1 = std::chrono::steady_clock::now();
-                    ws.f20_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                    ws.ns[CFG_F20] += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
                     if (hit) {
-                        ++ws.f20_matches;
-                        ws.f20_block_dl_bytes += bsz;
+                        ++ws.matches[CFG_F20];
+                        ws.block_dl_bytes[CFG_F20] += bsz;
                     }
                 }
 
@@ -1943,8 +1219,8 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                     const auto f10_scan_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
 
                     if (!f10_cands.empty()) {
-                        ++ws.f1010_f10_hits;
-                        ws.f1010_f10i_bw += f10i_ser_size;
+                        ++ws.outer_hits[CFG_F10_10];
+                        ws.inner_bw[CFG_F10_10] += f10i_sz;
 
                         const auto t2 = std::chrono::steady_clock::now();
                         bool f10i_hit = false;
@@ -1952,18 +1228,18 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                             if (f10i.Match(c)) { f10i_hit = true; break; }
                         }
                         const auto t3 = std::chrono::steady_clock::now();
-                        ws.f1010_ns += f10_scan_ns
-                                     + std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
+                        ws.ns[CFG_F10_10] += f10_scan_ns
+                                           + std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
                         if (f10i_hit) {
-                            ++ws.f1010_matches;
-                            ws.f1010_block_dl_bytes += bsz;
+                            ++ws.matches[CFG_F10_10];
+                            ws.block_dl_bytes[CFG_F10_10] += bsz;
                         }
                     } else {
-                        ws.f1010_ns += f10_scan_ns;
+                        ws.ns[CFG_F10_10] += f10_scan_ns;
                     }
                 }
 
-                // F12 outer scan (shared by F12+16 and F12+18).
+                // F12 outer scan (shared by F12+12, F12+16, F12+18, F12+GCS).
                 std::vector<Fuse12Filter::Element> f12_cands;
                 {
                     const auto t0 = std::chrono::steady_clock::now();
@@ -1975,8 +1251,8 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
 
                     // F12+12 hierarchical
                     if (!f12_cands.empty()) {
-                        ++ws.f1212_f12_hits;
-                        ws.f1212_f12i_bw += f12i_ser_size;
+                        ++ws.outer_hits[CFG_F12_12];
+                        ws.inner_bw[CFG_F12_12] += f12i_sz;
 
                         const auto t2 = std::chrono::steady_clock::now();
                         bool f12i_hit = false;
@@ -1984,20 +1260,20 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                             if (f12i.Match(c)) { f12i_hit = true; break; }
                         }
                         const auto t3 = std::chrono::steady_clock::now();
-                        ws.f1212_ns += f12_scan_ns
-                                     + std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
+                        ws.ns[CFG_F12_12] += f12_scan_ns
+                                           + std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
                         if (f12i_hit) {
-                            ++ws.f1212_matches;
-                            ws.f1212_block_dl_bytes += bsz;
+                            ++ws.matches[CFG_F12_12];
+                            ws.block_dl_bytes[CFG_F12_12] += bsz;
                         }
                     } else {
-                        ws.f1212_ns += f12_scan_ns;
+                        ws.ns[CFG_F12_12] += f12_scan_ns;
                     }
 
                     // F12+16 hierarchical
                     if (!f12_cands.empty()) {
-                        ++ws.f1216_f12_hits;
-                        ws.f1216_f16_bw += f16i_ser_size;
+                        ++ws.outer_hits[CFG_F12_16];
+                        ws.inner_bw[CFG_F12_16] += f16i_sz;
 
                         const auto t2 = std::chrono::steady_clock::now();
                         bool f16i_hit = false;
@@ -2005,20 +1281,20 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                             if (f16i.Match(c)) { f16i_hit = true; break; }
                         }
                         const auto t3 = std::chrono::steady_clock::now();
-                        ws.f1216_ns += f12_scan_ns
-                                     + std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
+                        ws.ns[CFG_F12_16] += f12_scan_ns
+                                           + std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
                         if (f16i_hit) {
-                            ++ws.f1216_matches;
-                            ws.f1216_block_dl_bytes += bsz;
+                            ++ws.matches[CFG_F12_16];
+                            ws.block_dl_bytes[CFG_F12_16] += bsz;
                         }
                     } else {
-                        ws.f1216_ns += f12_scan_ns;
+                        ws.ns[CFG_F12_16] += f12_scan_ns;
                     }
 
                     // F12+18 hierarchical
                     if (!f12_cands.empty()) {
-                        ++ws.f1218_f12_hits;
-                        ws.f1218_f18_bw += f18_ser_size;
+                        ++ws.outer_hits[CFG_F12_18];
+                        ws.inner_bw[CFG_F12_18] += f18_sz;
 
                         const auto t2 = std::chrono::steady_clock::now();
                         bool f18_hit = false;
@@ -2026,20 +1302,20 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                             if (f18.Match(c)) { f18_hit = true; break; }
                         }
                         const auto t3 = std::chrono::steady_clock::now();
-                        ws.f1218_ns += f12_scan_ns
-                                     + std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
+                        ws.ns[CFG_F12_18] += f12_scan_ns
+                                           + std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
                         if (f18_hit) {
-                            ++ws.f1218_matches;
-                            ws.f1218_block_dl_bytes += bsz;
+                            ++ws.matches[CFG_F12_18];
+                            ws.block_dl_bytes[CFG_F12_18] += bsz;
                         }
                     } else {
-                        ws.f1218_ns += f12_scan_ns;
+                        ws.ns[CFG_F12_18] += f12_scan_ns;
                     }
 
                     // F12+GCS hierarchical (reuse f12_cands from F12 outer scan)
                     if (!f12_cands.empty()) {
-                        ++ws.f12gcs_f12_hits;
-                        ws.f12gcs_gcsi_bw += gcsi_ser_size;
+                        ++ws.outer_hits[CFG_F12_GCS];
+                        ws.inner_bw[CFG_F12_GCS] += gcsi_sz;
 
                         const auto t2 = std::chrono::steady_clock::now();
                         bool gcsi_hit = false;
@@ -2047,14 +1323,14 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                             if (gcsi_filter.Match(c)) { gcsi_hit = true; break; }
                         }
                         const auto t3 = std::chrono::steady_clock::now();
-                        ws.f12gcs_ns += f12_scan_ns
-                                      + std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
+                        ws.ns[CFG_F12_GCS] += f12_scan_ns
+                                            + std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
                         if (gcsi_hit) {
-                            ++ws.f12gcs_matches;
-                            ws.f12gcs_block_dl_bytes += bsz;
+                            ++ws.matches[CFG_F12_GCS];
+                            ws.block_dl_bytes[CFG_F12_GCS] += bsz;
                         }
                     } else {
-                        ws.f12gcs_ns += f12_scan_ns;
+                        ws.ns[CFG_F12_GCS] += f12_scan_ns;
                     }
                 }
 
@@ -2069,8 +1345,8 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                     const auto f8_scan_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
 
                     if (!f8_cands.empty()) {
-                        ++ws.f8gcs_f8_hits;
-                        ws.f8gcs_gcsi_bw += gcsi_ser_size;
+                        ++ws.outer_hits[CFG_F8_GCS];
+                        ws.inner_bw[CFG_F8_GCS] += gcsi_sz;
 
                         const auto t2 = std::chrono::steady_clock::now();
                         bool gcsi_hit = false;
@@ -2078,33 +1354,20 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                             if (gcsi_filter.Match(c)) { gcsi_hit = true; break; }
                         }
                         const auto t3 = std::chrono::steady_clock::now();
-                        ws.f8gcs_ns += f8_scan_ns
-                                     + std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
+                        ws.ns[CFG_F8_GCS] += f8_scan_ns
+                                           + std::chrono::duration_cast<std::chrono::nanoseconds>(t3 - t2).count();
                         if (gcsi_hit) {
-                            ++ws.f8gcs_matches;
-                            ws.f8gcs_block_dl_bytes += bsz;
+                            ++ws.matches[CFG_F8_GCS];
+                            ws.block_dl_bytes[CFG_F8_GCS] += bsz;
                         }
                     } else {
-                        ws.f8gcs_ns += f8_scan_ns;
+                        ws.ns[CFG_F8_GCS] += f8_scan_ns;
                     }
                 }
 
-            }
+            } // end wallet loop
 
-            blocks.push_back(UnifiedBlockData{
-                cur_index, bsz,
-                gcs_params, std::move(gcs_enc),
-                k0, k1,
-                std::move(f16_s), std::move(f12_s), std::move(f10_s),
-                std::move(f18_flat_s), std::move(f20_flat_s),
-                std::move(f8_s),
-                f10i_k0, f10i_k1, std::move(f10i_s),
-                f12i_k0, f12i_k1, std::move(f12i_s),
-                f16i_k0, f16i_k1, std::move(f16i_s),
-                f18_k0, f18_k1, std::move(f18_s),
-                f20_k0, f20_k1, std::move(f20_s),
-                gcsi_params, std::move(gcsi_enc),
-            });
+            ++blocks_processed;
         } catch (...) { ++construction_failures; }
 
         // Progress dot.
@@ -2117,36 +1380,38 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
         }
 
         // Periodic intermediate report.
-        if (blocks.size() >= next_report) {
-            const double g_mb = static_cast<double>(gcs_bytes) / (1024.0 * 1024.0);
-            const double f16_mb_now = static_cast<double>(f16_bytes) / (1024.0 * 1024.0);
-            const double f18_flat_mb_now = static_cast<double>(f18_flat_bytes) / (1024.0 * 1024.0);
-            const double f20_flat_mb_now = static_cast<double>(f20_flat_bytes) / (1024.0 * 1024.0);
-            const double f12_mb_now = static_cast<double>(f12_bytes) / (1024.0 * 1024.0);
-            const double f10_mb_now = static_cast<double>(f10_bytes) / (1024.0 * 1024.0);
-            const double f8_mb_now = static_cast<double>(f8_bytes) / (1024.0 * 1024.0);
-            PrintProgressReport(blocks.size(), wallets, short_names, wallet_stats,
-                                g_mb, f16_mb_now, f18_flat_mb_now, f20_flat_mb_now, f12_mb_now, f10_mb_now, f8_mb_now);
+        if (blocks_processed >= next_report) {
+            std::array<double, NUM_CONFIGS> mb{};
+            for (int c = 0; c < NUM_CONFIGS; ++c) {
+                mb[c] = static_cast<double>(filter_bytes[c]) / (1024.0 * 1024.0);
+            }
+            PrintProgressReport(blocks_processed, wallets, short_names, wallet_stats, mb);
             std::snprintf(line_hdr, sizeof(line_hdr), "%6zu ", total_block_index);
             std::cout << line_hdr << std::flush;
             dots_on_line = 0;
             next_report += REPORT_INTERVAL;
         }
-    }
+    } // end block streaming loop
 
     std::cout << "\n"; // End progress line.
 
-    if (blocks.empty()) {
+    if (blocks_processed == 0) {
         throw std::runtime_error("[AllFilters] no blocks loaded from bin stream");
     }
 
-    const double gcs_mb = static_cast<double>(gcs_bytes) / (1024.0 * 1024.0);
-    const double f16_mb = static_cast<double>(f16_bytes) / (1024.0 * 1024.0);
-    const double f18_flat_mb = static_cast<double>(f18_flat_bytes) / (1024.0 * 1024.0);
-    const double f20_flat_mb = static_cast<double>(f20_flat_bytes) / (1024.0 * 1024.0);
-    const double f12_mb = static_cast<double>(f12_bytes) / (1024.0 * 1024.0);
+    // Compute filter sizes in MB for output.
+    std::array<double, NUM_CONFIGS> filter_mb{};
+    for (int c = 0; c < NUM_CONFIGS; ++c) {
+        filter_mb[c] = static_cast<double>(filter_bytes[c]) / (1024.0 * 1024.0);
+    }
 
-    std::cout << "[AllFilters] " << blocks.size() << " blocks"
+    const double gcs_mb = filter_mb[CFG_GCS];
+    const double f16_mb = filter_mb[CFG_F16];
+    const double f18_flat_mb = filter_mb[CFG_F18];
+    const double f20_flat_mb = filter_mb[CFG_F20];
+    const double f12_mb = filter_mb[CFG_F12_12]; // outer F12 = same for F12+12, F12+16, F12+18, F12+GCS
+
+    std::cout << "[AllFilters] " << blocks_processed << " blocks"
               << " (skipped " << skipped_small << " small, " << construction_failures << " failed)"
               << ", GCS=" << gcs_mb << " MB, F16=" << f16_mb << " MB"
               << ", F18=" << f18_flat_mb << " MB, F20=" << f20_flat_mb << " MB"
@@ -2154,6 +1419,9 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
               << std::endl;
 
     // === EMIT FINAL [AllFilters] LINES (for shell parsing) + TIMING LOOPS ===
+    // Timing loops re-stream blocks from disk, building only the needed filter(s) per block.
+    // This avoids storing all prebuilt filters in memory simultaneously.
+
     for (std::size_t wi = 0; wi < wallets.size(); ++wi) {
         const WalletScenarioData& wallet = wallets[wi];
         const GCSFilter::ElementSet& scripts = wallet.wallet_scripts;
@@ -2170,20 +1438,23 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
 
         // --- GCS ---
         {
-            const double block_dl_mb = static_cast<double>(ws.gcs_block_dl_bytes) / (1024.0 * 1024.0);
+            const double block_dl_mb = static_cast<double>(ws.block_dl_bytes[CFG_GCS]) / (1024.0 * 1024.0);
             std::cout << "[AllFilters] wallet=" << short_name
                       << " scripts=" << n_scripts
                       << " filter=GCS filter_mb=" << gcs_mb
-                      << " matches=" << ws.gcs_matches
+                      << " matches=" << ws.matches[CFG_GCS]
                       << " ground_truth=" << gt_count
                       << " block_download=" << block_dl_mb
                       << std::endl;
 
+            // Build GCS filters for timing loop (one filter type only).
+            std::size_t gcs_skip{0}, gcs_tb{0};
+            auto gcs_data = BuildGCSFiltersStreaming(chunk_metas, scan_max_blocks, gcs_skip, gcs_tb);
             bench.name("GCS/" + short_name);
             bench.run([&] {
                 std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    const GCSFilter f(b.gcs_params, b.gcs_encoded, true);
+                for (const PrebuiltGCSData& b : gcs_data) {
+                    const GCSFilter f(b.params, b.encoded, true);
                     if (f.MatchAny(scripts)) ++mc;
                 }
                 ankerl::nanobench::doNotOptimizeAway(mc);
@@ -2192,20 +1463,22 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
 
         // --- F16 ---
         {
-            const double block_dl_mb = static_cast<double>(ws.f16_block_dl_bytes) / (1024.0 * 1024.0);
+            const double block_dl_mb = static_cast<double>(ws.block_dl_bytes[CFG_F16]) / (1024.0 * 1024.0);
             std::cout << "[AllFilters] wallet=" << short_name
                       << " scripts=" << n_scripts
                       << " filter=F16 filter_mb=" << f16_mb
-                      << " matches=" << ws.f16_matches
+                      << " matches=" << ws.matches[CFG_F16]
                       << " ground_truth=" << gt_count
                       << " block_download=" << block_dl_mb
                       << std::endl;
 
+            std::size_t skip{0}, cf{0}, tb{0};
+            auto data = BuildFuseFiltersStreaming<Fuse16Filter>(chunk_metas, scan_max_blocks, skip, cf, tb);
             bench.name("F16/" + short_name);
             bench.run([&] {
                 std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    Fuse16Filter f = Fuse16Filter::Deserialize(b.k0, b.k1, b.f16_ser);
+                for (const PrebuiltFilterData& b : data) {
+                    Fuse16Filter f = Fuse16Filter::Deserialize(b.siphash_k0, b.siphash_k1, b.serialized);
                     if (f.MatchAny(scripts)) ++mc;
                 }
                 ankerl::nanobench::doNotOptimizeAway(mc);
@@ -2214,20 +1487,22 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
 
         // --- F18 standalone ---
         {
-            const double block_dl_mb = static_cast<double>(ws.f18_block_dl_bytes) / (1024.0 * 1024.0);
+            const double block_dl_mb = static_cast<double>(ws.block_dl_bytes[CFG_F18]) / (1024.0 * 1024.0);
             std::cout << "[AllFilters] wallet=" << short_name
                       << " scripts=" << n_scripts
                       << " filter=F18 filter_mb=" << f18_flat_mb
-                      << " matches=" << ws.f18_matches
+                      << " matches=" << ws.matches[CFG_F18]
                       << " ground_truth=" << gt_count
                       << " block_download=" << block_dl_mb
                       << std::endl;
 
+            std::size_t skip{0}, cf{0}, tb{0};
+            auto data = BuildFuseFiltersStreaming<Fuse18Filter>(chunk_metas, scan_max_blocks, skip, cf, tb);
             bench.name("F18/" + short_name);
             bench.run([&] {
                 std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    Fuse18Filter f = Fuse18Filter::Deserialize(b.k0, b.k1, b.f18_flat_ser);
+                for (const PrebuiltFilterData& b : data) {
+                    Fuse18Filter f = Fuse18Filter::Deserialize(b.siphash_k0, b.siphash_k1, b.serialized);
                     if (f.MatchAny(scripts)) ++mc;
                 }
                 ankerl::nanobench::doNotOptimizeAway(mc);
@@ -2236,54 +1511,96 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
 
         // --- F20 standalone ---
         {
-            const double block_dl_mb = static_cast<double>(ws.f20_block_dl_bytes) / (1024.0 * 1024.0);
+            const double block_dl_mb = static_cast<double>(ws.block_dl_bytes[CFG_F20]) / (1024.0 * 1024.0);
             std::cout << "[AllFilters] wallet=" << short_name
                       << " scripts=" << n_scripts
                       << " filter=F20 filter_mb=" << f20_flat_mb
-                      << " matches=" << ws.f20_matches
+                      << " matches=" << ws.matches[CFG_F20]
                       << " ground_truth=" << gt_count
                       << " block_download=" << block_dl_mb
                       << std::endl;
 
+            std::size_t skip{0}, cf{0}, tb{0};
+            auto data = BuildFuseFiltersStreaming<Fuse20Filter>(chunk_metas, scan_max_blocks, skip, cf, tb);
             bench.name("F20/" + short_name);
             bench.run([&] {
                 std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    Fuse20Filter f = Fuse20Filter::Deserialize(b.k0, b.k1, b.f20_flat_ser);
+                for (const PrebuiltFilterData& b : data) {
+                    Fuse20Filter f = Fuse20Filter::Deserialize(b.siphash_k0, b.siphash_k1, b.serialized);
                     if (f.MatchAny(scripts)) ++mc;
                 }
                 ankerl::nanobench::doNotOptimizeAway(mc);
             });
         }
 
+        // Helper: build paired filters for hierarchical timing loops.
+        // Only builds the two needed filter types per block.
+        struct PairedTimingData {
+            PrebuiltFilterData outer;
+            PrebuiltFilterData inner;
+        };
+
+        auto build_paired = [&](uint64_t domain_k0, uint64_t domain_k1,
+                                auto outer_builder, auto inner_builder) -> std::vector<PairedTimingData>
+        {
+            std::vector<PairedTimingData> paired;
+            if (scan_max_blocks > 0) paired.reserve(scan_max_blocks);
+            std::size_t bi{0};
+            FilterBench::TxBlockStreamReader rdr(chunk_metas, scan_max_blocks);
+            while (rdr.HasMore()) {
+                const auto blk = rdr.ReadNextBlock();
+                const std::size_t ci = bi++;
+                GCSFilter::ElementSet elems = ExtractElementsFromChunkBlock(blk);
+                if (elems.size() < 2) continue;
+                const uint64_t ok0 = blk.block_hash.GetUint64(0);
+                const uint64_t ok1 = blk.block_hash.GetUint64(1);
+                const uint64_t ik0 = DeriveInnerK0(domain_k0, domain_k1, ok0, ok1);
+                const uint64_t ik1 = DeriveInnerK1(domain_k0, domain_k1, ok0, ok1);
+                try {
+                    auto outer_ser = outer_builder(ok0, ok1, elems);
+                    auto inner_ser = inner_builder(ik0, ik1, elems);
+                    const uint32_t bsz_val = blk.block_size.value_or(0);
+                    paired.push_back(PairedTimingData{
+                        PrebuiltFilterData{ok0, ok1, std::move(outer_ser), bsz_val, ci},
+                        PrebuiltFilterData{ik0, ik1, std::move(inner_ser), bsz_val, ci},
+                    });
+                } catch (...) {}
+            }
+            return paired;
+        };
+
         // --- F16+20 hierarchical ---
         {
-            const double f20_bw_mb = static_cast<double>(ws.f1620_f20_bw) / (1024.0 * 1024.0);
+            const double f20_bw_mb = static_cast<double>(ws.inner_bw[CFG_F16_20]) / (1024.0 * 1024.0);
             const double total_filt_mb = f16_mb + f20_bw_mb;
-            const double block_dl_mb = static_cast<double>(ws.f1620_block_dl_bytes) / (1024.0 * 1024.0);
+            const double block_dl_mb = static_cast<double>(ws.block_dl_bytes[CFG_F16_20]) / (1024.0 * 1024.0);
             std::cout << "[AllFilters] wallet=" << short_name
                       << " scripts=" << n_scripts
                       << " filter=F16+20 total_filter=" << total_filt_mb
-                      << " matches=" << ws.f1620_matches
+                      << " matches=" << ws.matches[CFG_F16_20]
                       << " ground_truth=" << gt_count
-                      << " f16_block_matches=" << ws.f1620_f16_hits
-                      << " eliminated=" << (ws.f1620_f16_hits - ws.f1620_matches)
+                      << " f16_block_matches=" << ws.outer_hits[CFG_F16_20]
+                      << " eliminated=" << (ws.outer_hits[CFG_F16_20] - ws.matches[CFG_F16_20])
                       << " block_download=" << block_dl_mb
                       << std::endl;
+
+            auto paired = build_paired(F20_DOMAIN_K0, F20_DOMAIN_K1,
+                [](uint64_t fk0, uint64_t fk1, const GCSFilter::ElementSet& e) { return Fuse16Filter(fk0, fk1, e).Serialize(); },
+                [](uint64_t fk0, uint64_t fk1, const GCSFilter::ElementSet& e) { return Fuse20Filter(fk0, fk1, e).Serialize(); });
 
             bench.name("F16+20/" + short_name);
             bench.run([&] {
                 std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    Fuse16Filter f16 = Fuse16Filter::Deserialize(b.k0, b.k1, b.f16_ser);
+                for (const PairedTimingData& p : paired) {
+                    Fuse16Filter f16_d = Fuse16Filter::Deserialize(p.outer.siphash_k0, p.outer.siphash_k1, p.outer.serialized);
                     std::vector<Fuse16Filter::Element> cands;
                     for (const auto& s : scripts) {
-                        if (f16.Match(s)) cands.push_back(s);
+                        if (f16_d.Match(s)) cands.push_back(s);
                     }
                     if (cands.empty()) continue;
-                    Fuse20Filter f20 = Fuse20Filter::Deserialize(b.f20_k0, b.f20_k1, b.f20_ser);
+                    Fuse20Filter f20_d = Fuse20Filter::Deserialize(p.inner.siphash_k0, p.inner.siphash_k1, p.inner.serialized);
                     for (const auto& c : cands) {
-                        if (f20.Match(c)) { ++mc; break; }
+                        if (f20_d.Match(c)) { ++mc; break; }
                     }
                 }
                 ankerl::nanobench::doNotOptimizeAway(mc);
@@ -2292,33 +1609,37 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
 
         // --- F10+10 hierarchical ---
         {
-            const double f10_mb = static_cast<double>(f10_bytes) / (1024.0 * 1024.0);
-            const double f10i_bw_mb = static_cast<double>(ws.f1010_f10i_bw) / (1024.0 * 1024.0);
-            const double total_filt_mb = f10_mb + f10i_bw_mb;
-            const double block_dl_mb = static_cast<double>(ws.f1010_block_dl_bytes) / (1024.0 * 1024.0);
+            const double f10_mb_val = filter_mb[CFG_F10_10];
+            const double f10i_bw_mb = static_cast<double>(ws.inner_bw[CFG_F10_10]) / (1024.0 * 1024.0);
+            const double total_filt_mb = f10_mb_val + f10i_bw_mb;
+            const double block_dl_mb = static_cast<double>(ws.block_dl_bytes[CFG_F10_10]) / (1024.0 * 1024.0);
             std::cout << "[AllFilters] wallet=" << short_name
                       << " scripts=" << n_scripts
                       << " filter=F10+10 total_filter=" << total_filt_mb
-                      << " matches=" << ws.f1010_matches
+                      << " matches=" << ws.matches[CFG_F10_10]
                       << " ground_truth=" << gt_count
-                      << " f10_block_matches=" << ws.f1010_f10_hits
-                      << " eliminated=" << (ws.f1010_f10_hits - ws.f1010_matches)
+                      << " f10_block_matches=" << ws.outer_hits[CFG_F10_10]
+                      << " eliminated=" << (ws.outer_hits[CFG_F10_10] - ws.matches[CFG_F10_10])
                       << " block_download=" << block_dl_mb
                       << std::endl;
+
+            auto paired = build_paired(F10_INNER_DOMAIN_K0, F10_INNER_DOMAIN_K1,
+                [](uint64_t fk0, uint64_t fk1, const GCSFilter::ElementSet& e) { return Fuse10Filter(fk0, fk1, e).Serialize(); },
+                [](uint64_t fk0, uint64_t fk1, const GCSFilter::ElementSet& e) { return Fuse10Filter(fk0, fk1, e).Serialize(); });
 
             bench.name("F10+10/" + short_name);
             bench.run([&] {
                 std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    Fuse10Filter f10 = Fuse10Filter::Deserialize(b.k0, b.k1, b.f10_ser);
+                for (const PairedTimingData& p : paired) {
+                    Fuse10Filter f10_d = Fuse10Filter::Deserialize(p.outer.siphash_k0, p.outer.siphash_k1, p.outer.serialized);
                     std::vector<Fuse10Filter::Element> cands;
                     for (const auto& s : scripts) {
-                        if (f10.Match(s)) cands.push_back(s);
+                        if (f10_d.Match(s)) cands.push_back(s);
                     }
                     if (cands.empty()) continue;
-                    Fuse10Filter f10i = Fuse10Filter::Deserialize(b.f10i_k0, b.f10i_k1, b.f10i_ser);
+                    Fuse10Filter f10i_d = Fuse10Filter::Deserialize(p.inner.siphash_k0, p.inner.siphash_k1, p.inner.serialized);
                     for (const auto& c : cands) {
-                        if (f10i.Match(c)) { ++mc; break; }
+                        if (f10i_d.Match(c)) { ++mc; break; }
                     }
                 }
                 ankerl::nanobench::doNotOptimizeAway(mc);
@@ -2327,32 +1648,36 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
 
         // --- F12+12 hierarchical ---
         {
-            const double f12i_bw_mb = static_cast<double>(ws.f1212_f12i_bw) / (1024.0 * 1024.0);
+            const double f12i_bw_mb = static_cast<double>(ws.inner_bw[CFG_F12_12]) / (1024.0 * 1024.0);
             const double total_filt_mb = f12_mb + f12i_bw_mb;
-            const double block_dl_mb = static_cast<double>(ws.f1212_block_dl_bytes) / (1024.0 * 1024.0);
+            const double block_dl_mb = static_cast<double>(ws.block_dl_bytes[CFG_F12_12]) / (1024.0 * 1024.0);
             std::cout << "[AllFilters] wallet=" << short_name
                       << " scripts=" << n_scripts
                       << " filter=F12+12 total_filter=" << total_filt_mb
-                      << " matches=" << ws.f1212_matches
+                      << " matches=" << ws.matches[CFG_F12_12]
                       << " ground_truth=" << gt_count
-                      << " f12_block_matches=" << ws.f1212_f12_hits
-                      << " eliminated=" << (ws.f1212_f12_hits - ws.f1212_matches)
+                      << " f12_block_matches=" << ws.outer_hits[CFG_F12_12]
+                      << " eliminated=" << (ws.outer_hits[CFG_F12_12] - ws.matches[CFG_F12_12])
                       << " block_download=" << block_dl_mb
                       << std::endl;
+
+            auto paired = build_paired(F12_INNER_DOMAIN_K0, F12_INNER_DOMAIN_K1,
+                [](uint64_t fk0, uint64_t fk1, const GCSFilter::ElementSet& e) { return Fuse12Filter(fk0, fk1, e).Serialize(); },
+                [](uint64_t fk0, uint64_t fk1, const GCSFilter::ElementSet& e) { return Fuse12Filter(fk0, fk1, e).Serialize(); });
 
             bench.name("F12+12/" + short_name);
             bench.run([&] {
                 std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    Fuse12Filter f12 = Fuse12Filter::Deserialize(b.k0, b.k1, b.f12_ser);
+                for (const PairedTimingData& p : paired) {
+                    Fuse12Filter f12_d = Fuse12Filter::Deserialize(p.outer.siphash_k0, p.outer.siphash_k1, p.outer.serialized);
                     std::vector<Fuse12Filter::Element> cands;
                     for (const auto& s : scripts) {
-                        if (f12.Match(s)) cands.push_back(s);
+                        if (f12_d.Match(s)) cands.push_back(s);
                     }
                     if (cands.empty()) continue;
-                    Fuse12Filter f12i = Fuse12Filter::Deserialize(b.f12i_k0, b.f12i_k1, b.f12i_ser);
+                    Fuse12Filter f12i_d = Fuse12Filter::Deserialize(p.inner.siphash_k0, p.inner.siphash_k1, p.inner.serialized);
                     for (const auto& c : cands) {
-                        if (f12i.Match(c)) { ++mc; break; }
+                        if (f12i_d.Match(c)) { ++mc; break; }
                     }
                 }
                 ankerl::nanobench::doNotOptimizeAway(mc);
@@ -2361,32 +1686,36 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
 
         // --- F12+16 hierarchical ---
         {
-            const double f16_bw_mb = static_cast<double>(ws.f1216_f16_bw) / (1024.0 * 1024.0);
+            const double f16_bw_mb = static_cast<double>(ws.inner_bw[CFG_F12_16]) / (1024.0 * 1024.0);
             const double total_filt_mb = f12_mb + f16_bw_mb;
-            const double block_dl_mb = static_cast<double>(ws.f1216_block_dl_bytes) / (1024.0 * 1024.0);
+            const double block_dl_mb = static_cast<double>(ws.block_dl_bytes[CFG_F12_16]) / (1024.0 * 1024.0);
             std::cout << "[AllFilters] wallet=" << short_name
                       << " scripts=" << n_scripts
                       << " filter=F12+16 total_filter=" << total_filt_mb
-                      << " matches=" << ws.f1216_matches
+                      << " matches=" << ws.matches[CFG_F12_16]
                       << " ground_truth=" << gt_count
-                      << " f12_block_matches=" << ws.f1216_f12_hits
-                      << " eliminated=" << (ws.f1216_f12_hits - ws.f1216_matches)
+                      << " f12_block_matches=" << ws.outer_hits[CFG_F12_16]
+                      << " eliminated=" << (ws.outer_hits[CFG_F12_16] - ws.matches[CFG_F12_16])
                       << " block_download=" << block_dl_mb
                       << std::endl;
+
+            auto paired = build_paired(F16_INNER_DOMAIN_K0, F16_INNER_DOMAIN_K1,
+                [](uint64_t fk0, uint64_t fk1, const GCSFilter::ElementSet& e) { return Fuse12Filter(fk0, fk1, e).Serialize(); },
+                [](uint64_t fk0, uint64_t fk1, const GCSFilter::ElementSet& e) { return Fuse16Filter(fk0, fk1, e).Serialize(); });
 
             bench.name("F12+16/" + short_name);
             bench.run([&] {
                 std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    Fuse12Filter f12 = Fuse12Filter::Deserialize(b.k0, b.k1, b.f12_ser);
+                for (const PairedTimingData& p : paired) {
+                    Fuse12Filter f12_d = Fuse12Filter::Deserialize(p.outer.siphash_k0, p.outer.siphash_k1, p.outer.serialized);
                     std::vector<Fuse12Filter::Element> cands;
                     for (const auto& s : scripts) {
-                        if (f12.Match(s)) cands.push_back(s);
+                        if (f12_d.Match(s)) cands.push_back(s);
                     }
                     if (cands.empty()) continue;
-                    Fuse16Filter f16i = Fuse16Filter::Deserialize(b.f16i_k0, b.f16i_k1, b.f16i_ser);
+                    Fuse16Filter f16i_d = Fuse16Filter::Deserialize(p.inner.siphash_k0, p.inner.siphash_k1, p.inner.serialized);
                     for (const auto& c : cands) {
-                        if (f16i.Match(c)) { ++mc; break; }
+                        if (f16i_d.Match(c)) { ++mc; break; }
                     }
                 }
                 ankerl::nanobench::doNotOptimizeAway(mc);
@@ -2395,67 +1724,112 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
 
         // --- F12+18 hierarchical ---
         {
-            const double f18_bw_mb = static_cast<double>(ws.f1218_f18_bw) / (1024.0 * 1024.0);
+            const double f18_bw_mb = static_cast<double>(ws.inner_bw[CFG_F12_18]) / (1024.0 * 1024.0);
             const double total_filt_mb = f12_mb + f18_bw_mb;
-            const double block_dl_mb = static_cast<double>(ws.f1218_block_dl_bytes) / (1024.0 * 1024.0);
+            const double block_dl_mb = static_cast<double>(ws.block_dl_bytes[CFG_F12_18]) / (1024.0 * 1024.0);
             std::cout << "[AllFilters] wallet=" << short_name
                       << " scripts=" << n_scripts
                       << " filter=F12+18 total_filter=" << total_filt_mb
-                      << " matches=" << ws.f1218_matches
+                      << " matches=" << ws.matches[CFG_F12_18]
                       << " ground_truth=" << gt_count
-                      << " f12_block_matches=" << ws.f1218_f12_hits
-                      << " eliminated=" << (ws.f1218_f12_hits - ws.f1218_matches)
+                      << " f12_block_matches=" << ws.outer_hits[CFG_F12_18]
+                      << " eliminated=" << (ws.outer_hits[CFG_F12_18] - ws.matches[CFG_F12_18])
                       << " block_download=" << block_dl_mb
                       << std::endl;
+
+            auto paired = build_paired(F18_DOMAIN_K0, F18_DOMAIN_K1,
+                [](uint64_t fk0, uint64_t fk1, const GCSFilter::ElementSet& e) { return Fuse12Filter(fk0, fk1, e).Serialize(); },
+                [](uint64_t fk0, uint64_t fk1, const GCSFilter::ElementSet& e) { return Fuse18Filter(fk0, fk1, e).Serialize(); });
 
             bench.name("F12+18/" + short_name);
             bench.run([&] {
                 std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    Fuse12Filter f12 = Fuse12Filter::Deserialize(b.k0, b.k1, b.f12_ser);
+                for (const PairedTimingData& p : paired) {
+                    Fuse12Filter f12_d = Fuse12Filter::Deserialize(p.outer.siphash_k0, p.outer.siphash_k1, p.outer.serialized);
                     std::vector<Fuse12Filter::Element> cands;
                     for (const auto& s : scripts) {
-                        if (f12.Match(s)) cands.push_back(s);
+                        if (f12_d.Match(s)) cands.push_back(s);
                     }
                     if (cands.empty()) continue;
-                    Fuse18Filter f18 = Fuse18Filter::Deserialize(b.f18_k0, b.f18_k1, b.f18_ser);
+                    Fuse18Filter f18_d = Fuse18Filter::Deserialize(p.inner.siphash_k0, p.inner.siphash_k1, p.inner.serialized);
                     for (const auto& c : cands) {
-                        if (f18.Match(c)) { ++mc; break; }
+                        if (f18_d.Match(c)) { ++mc; break; }
                     }
                 }
                 ankerl::nanobench::doNotOptimizeAway(mc);
             });
         }
 
-        // --- F8+GCS hierarchical ---
+        // --- Fuse+GCS hierarchical timing helper ---
+        struct FuseGCSPairedData {
+            PrebuiltFilterData outer;
+            PrebuiltGCSData gcsi;
+        };
+
+        auto build_fuse_gcs_paired = [&](auto outer_builder) -> std::vector<FuseGCSPairedData>
         {
-            const double f8_mb = static_cast<double>(f8_bytes) / (1024.0 * 1024.0);
-            const double gcsi_bw_mb = static_cast<double>(ws.f8gcs_gcsi_bw) / (1024.0 * 1024.0);
-            const double total_filt_mb = f8_mb + gcsi_bw_mb;
-            const double block_dl_mb = static_cast<double>(ws.f8gcs_block_dl_bytes) / (1024.0 * 1024.0);
+            std::vector<FuseGCSPairedData> result;
+            if (scan_max_blocks > 0) result.reserve(scan_max_blocks);
+            std::size_t bi{0};
+            FilterBench::TxBlockStreamReader rdr(chunk_metas, scan_max_blocks);
+            while (rdr.HasMore()) {
+                const auto blk = rdr.ReadNextBlock();
+                const std::size_t ci = bi++;
+                GCSFilter::ElementSet elems = ExtractElementsFromChunkBlock(blk);
+                if (elems.size() < 2) continue;
+                const uint64_t ok0 = blk.block_hash.GetUint64(0);
+                const uint64_t ok1 = blk.block_hash.GetUint64(1);
+                const uint64_t ik0 = DeriveInnerK0(GCS_INNER_DOMAIN_K0, GCS_INNER_DOMAIN_K1, ok0, ok1);
+                const uint64_t ik1 = DeriveInnerK1(GCS_INNER_DOMAIN_K0, GCS_INNER_DOMAIN_K1, ok0, ok1);
+                try {
+                    auto outer_ser = outer_builder(ok0, ok1, elems);
+                    GCSFilter::Params gp(ik0, ik1, BASIC_FILTER_P, BASIC_FILTER_M);
+                    GCSFilter gcsi_filt(gp, elems);
+                    result.push_back(FuseGCSPairedData{
+                        PrebuiltFilterData{ok0, ok1, std::move(outer_ser), blk.block_size.value_or(0), ci},
+                        PrebuiltGCSData{gp, gcsi_filt.GetEncoded(), blk.block_size.value_or(0), ci},
+                    });
+                } catch (...) {}
+            }
+            return result;
+        };
+
+        auto emit_fuse_gcs_header = [&](FilterConfig cfg, const char* filter_label,
+                                         const char* outer_label, double outer_mb_val) {
+            const double gcsi_bw_mb = static_cast<double>(ws.inner_bw[cfg]) / (1024.0 * 1024.0);
+            const double total_filt_mb = outer_mb_val + gcsi_bw_mb;
+            const double block_dl_mb = static_cast<double>(ws.block_dl_bytes[cfg]) / (1024.0 * 1024.0);
             std::cout << "[AllFilters] wallet=" << short_name
                       << " scripts=" << n_scripts
-                      << " filter=F8+GCS total_filter=" << total_filt_mb
-                      << " matches=" << ws.f8gcs_matches
+                      << " filter=" << filter_label << " total_filter=" << total_filt_mb
+                      << " matches=" << ws.matches[cfg]
                       << " ground_truth=" << gt_count
-                      << " f8_block_matches=" << ws.f8gcs_f8_hits
-                      << " eliminated=" << (ws.f8gcs_f8_hits - ws.f8gcs_matches)
+                      << " " << outer_label << "_block_matches=" << ws.outer_hits[cfg]
+                      << " eliminated=" << (ws.outer_hits[cfg] - ws.matches[cfg])
                       << " block_download=" << block_dl_mb
                       << std::endl;
+        };
 
+        // --- F8+GCS hierarchical ---
+        {
+            emit_fuse_gcs_header(CFG_F8_GCS, "F8+GCS", "f8", filter_mb[CFG_F8_GCS]);
+            auto fgcs_paired = build_fuse_gcs_paired(
+                [](uint64_t fk0, uint64_t fk1, const GCSFilter::ElementSet& e) {
+                    return Fuse8Filter(fk0, fk1, e).Serialize();
+                });
             bench.name("F8+GCS/" + short_name);
             bench.run([&] {
                 std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    Fuse8Filter f8 = Fuse8Filter::Deserialize(b.k0, b.k1, b.f8_ser);
+                for (const FuseGCSPairedData& p : fgcs_paired) {
+                    Fuse8Filter outer_d = Fuse8Filter::Deserialize(p.outer.siphash_k0, p.outer.siphash_k1, p.outer.serialized);
                     std::vector<Fuse8Filter::Element> cands;
                     for (const auto& s : scripts) {
-                        if (f8.Match(s)) cands.push_back(s);
+                        if (outer_d.Match(s)) cands.push_back(s);
                     }
                     if (cands.empty()) continue;
-                    const GCSFilter gcsi(b.gcsi_params, b.gcsi_encoded, true);
+                    const GCSFilter gcsi_d(p.gcsi.params, p.gcsi.encoded, true);
                     for (const auto& c : cands) {
-                        if (gcsi.Match(c)) { ++mc; break; }
+                        if (gcsi_d.Match(c)) { ++mc; break; }
                     }
                 }
                 ankerl::nanobench::doNotOptimizeAway(mc);
@@ -2464,32 +1838,24 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
 
         // --- F12+GCS hierarchical ---
         {
-            const double gcsi_bw_mb = static_cast<double>(ws.f12gcs_gcsi_bw) / (1024.0 * 1024.0);
-            const double total_filt_mb = f12_mb + gcsi_bw_mb;
-            const double block_dl_mb = static_cast<double>(ws.f12gcs_block_dl_bytes) / (1024.0 * 1024.0);
-            std::cout << "[AllFilters] wallet=" << short_name
-                      << " scripts=" << n_scripts
-                      << " filter=F12+GCS total_filter=" << total_filt_mb
-                      << " matches=" << ws.f12gcs_matches
-                      << " ground_truth=" << gt_count
-                      << " f12_block_matches=" << ws.f12gcs_f12_hits
-                      << " eliminated=" << (ws.f12gcs_f12_hits - ws.f12gcs_matches)
-                      << " block_download=" << block_dl_mb
-                      << std::endl;
-
+            emit_fuse_gcs_header(CFG_F12_GCS, "F12+GCS", "f12", f12_mb);
+            auto fgcs_paired = build_fuse_gcs_paired(
+                [](uint64_t fk0, uint64_t fk1, const GCSFilter::ElementSet& e) {
+                    return Fuse12Filter(fk0, fk1, e).Serialize();
+                });
             bench.name("F12+GCS/" + short_name);
             bench.run([&] {
                 std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    Fuse12Filter f12 = Fuse12Filter::Deserialize(b.k0, b.k1, b.f12_ser);
+                for (const FuseGCSPairedData& p : fgcs_paired) {
+                    Fuse12Filter outer_d = Fuse12Filter::Deserialize(p.outer.siphash_k0, p.outer.siphash_k1, p.outer.serialized);
                     std::vector<Fuse12Filter::Element> cands;
                     for (const auto& s : scripts) {
-                        if (f12.Match(s)) cands.push_back(s);
+                        if (outer_d.Match(s)) cands.push_back(s);
                     }
                     if (cands.empty()) continue;
-                    const GCSFilter gcsi(b.gcsi_params, b.gcsi_encoded, true);
+                    const GCSFilter gcsi_d(p.gcsi.params, p.gcsi.encoded, true);
                     for (const auto& c : cands) {
-                        if (gcsi.Match(c)) { ++mc; break; }
+                        if (gcsi_d.Match(c)) { ++mc; break; }
                     }
                 }
                 ankerl::nanobench::doNotOptimizeAway(mc);
@@ -2498,38 +1864,30 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
 
         // --- F16+GCS hierarchical ---
         {
-            const double gcsi_bw_mb = static_cast<double>(ws.f16gcs_gcsi_bw) / (1024.0 * 1024.0);
-            const double total_filt_mb = f16_mb + gcsi_bw_mb;
-            const double block_dl_mb = static_cast<double>(ws.f16gcs_block_dl_bytes) / (1024.0 * 1024.0);
-            std::cout << "[AllFilters] wallet=" << short_name
-                      << " scripts=" << n_scripts
-                      << " filter=F16+GCS total_filter=" << total_filt_mb
-                      << " matches=" << ws.f16gcs_matches
-                      << " ground_truth=" << gt_count
-                      << " f16_block_matches=" << ws.f16gcs_f16_hits
-                      << " eliminated=" << (ws.f16gcs_f16_hits - ws.f16gcs_matches)
-                      << " block_download=" << block_dl_mb
-                      << std::endl;
-
+            emit_fuse_gcs_header(CFG_F16_GCS, "F16+GCS", "f16", f16_mb);
+            auto fgcs_paired = build_fuse_gcs_paired(
+                [](uint64_t fk0, uint64_t fk1, const GCSFilter::ElementSet& e) {
+                    return Fuse16Filter(fk0, fk1, e).Serialize();
+                });
             bench.name("F16+GCS/" + short_name);
             bench.run([&] {
                 std::size_t mc{0};
-                for (const UnifiedBlockData& b : blocks) {
-                    Fuse16Filter f16 = Fuse16Filter::Deserialize(b.k0, b.k1, b.f16_ser);
+                for (const FuseGCSPairedData& p : fgcs_paired) {
+                    Fuse16Filter outer_d = Fuse16Filter::Deserialize(p.outer.siphash_k0, p.outer.siphash_k1, p.outer.serialized);
                     std::vector<Fuse16Filter::Element> cands;
                     for (const auto& s : scripts) {
-                        if (f16.Match(s)) cands.push_back(s);
+                        if (outer_d.Match(s)) cands.push_back(s);
                     }
                     if (cands.empty()) continue;
-                    const GCSFilter gcsi(b.gcsi_params, b.gcsi_encoded, true);
+                    const GCSFilter gcsi_d(p.gcsi.params, p.gcsi.encoded, true);
                     for (const auto& c : cands) {
-                        if (gcsi.Match(c)) { ++mc; break; }
+                        if (gcsi_d.Match(c)) { ++mc; break; }
                     }
                 }
                 ankerl::nanobench::doNotOptimizeAway(mc);
             });
         }
-    }
+    } // end wallet loop
 }
 
 BENCHMARK(ResearchBasicBinStreamingWalletScan);
