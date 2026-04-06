@@ -529,7 +529,7 @@ struct PrebuiltGCSData {
     const std::vector<FilterBench::BinChunkMeta>& chunk_metas,
     std::size_t max_blocks,
     std::size_t& out_skipped_small,
-    std::size_t& out_total_bytes)
+    uint64_t& out_total_bytes)
 {
     std::vector<PrebuiltGCSData> data;
     if (max_blocks > 0) data.reserve(max_blocks);
@@ -566,7 +566,7 @@ template<typename FilterT>
     std::size_t max_blocks,
     std::size_t& out_skipped_small,
     std::size_t& out_construction_failures,
-    std::size_t& out_total_bytes)
+    uint64_t& out_total_bytes)
 {
     std::vector<PrebuiltFilterData> data;
     if (max_blocks > 0) data.reserve(max_blocks);
@@ -653,12 +653,13 @@ static void ResearchBasicClientSideQuery(benchmark::Bench& bench)
     const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
     const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
 
-    std::size_t skipped_small{0}, total_bytes{0};
+    std::size_t skipped_small{0};
+    uint64_t total_bytes{0};
     std::vector<PrebuiltGCSData> filters = BuildGCSFiltersStreaming(chunk_metas, scan_max_blocks, skipped_small, total_bytes);
 
     const double total_mb = static_cast<double>(total_bytes) / (1024.0 * 1024.0);
     std::size_t total_matches{0};
-    std::size_t fp_block_bytes{0};
+    uint64_t fp_block_bytes{0};
     for (const PrebuiltGCSData& d : filters) {
         const GCSFilter filter(d.params, d.encoded, /*skip_decode_check=*/true);
         if (filter.MatchAny(wallet_scripts)) {
@@ -705,13 +706,14 @@ static void ResearchFuseClientSideQuery(benchmark::Bench& bench, const char* fil
     const WalletScenarioData scenario = LoadWalletScenarioData(wallet_scenario);
     const GCSFilter::ElementSet& wallet_scripts = scenario.wallet_scripts;
 
-    std::size_t skipped_small{0}, construction_failures{0}, total_bytes{0};
+    std::size_t skipped_small{0}, construction_failures{0};
+    uint64_t total_bytes{0};
     std::vector<PrebuiltFilterData> filters = BuildFuseFiltersStreaming<FilterT>(
         chunk_metas, scan_max_blocks, skipped_small, construction_failures, total_bytes);
 
     const double total_mb = static_cast<double>(total_bytes) / (1024.0 * 1024.0);
     std::size_t total_matches{0};
-    std::size_t fp_block_bytes{0};
+    uint64_t fp_block_bytes{0};
     for (const PrebuiltFilterData& d : filters) {
         FilterT filter = FilterT::Deserialize(d.siphash_k0, d.siphash_k1, d.serialized);
         if (filter.MatchAny(wallet_scripts)) {
@@ -782,8 +784,8 @@ static void ResearchHierarchical(
     std::vector<PairedFilters> paired;
     std::size_t skipped_small{0};
     std::size_t construction_failures{0};
-    std::size_t outer_total_bytes{0};
-    std::size_t inner_total_bytes{0};
+    uint64_t outer_total_bytes{0};
+    uint64_t inner_total_bytes{0};
 
     if (scan_max_blocks > 0) paired.reserve(scan_max_blocks);
     std::size_t block_index{0};
@@ -820,8 +822,8 @@ static void ResearchHierarchical(
     std::size_t inner_checks{0};
     std::size_t final_matches{0};
     std::size_t total_outer_script_hits{0};
-    std::size_t inner_bandwidth{0};
-    std::size_t fp_block_bytes{0};
+    uint64_t inner_bandwidth{0};
+    uint64_t fp_block_bytes{0};
 
     using Element = typename OuterFilterT::Element;
 
@@ -942,11 +944,11 @@ static constexpr const char* CONFIG_NAMES[NUM_CONFIGS] = {
 // Running stats accumulated per wallet during the streaming build+eval pass.
 struct WalletRunningStats {
     std::array<std::size_t, NUM_CONFIGS> matches{};
-    std::array<std::size_t, NUM_CONFIGS> block_dl_bytes{};
+    std::array<uint64_t, NUM_CONFIGS> block_dl_bytes{};
     std::array<int64_t, NUM_CONFIGS> ns{};
     // Hierarchical-specific: outer layer hits and inner bandwidth.
     std::array<std::size_t, NUM_CONFIGS> outer_hits{};
-    std::array<std::size_t, NUM_CONFIGS> inner_bw{};
+    std::array<uint64_t, NUM_CONFIGS> inner_bw{};
     std::size_t gt_count{0};
 };
 
@@ -1017,7 +1019,7 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
     std::vector<WalletRunningStats> wallet_stats(wallets.size());
 
     std::size_t skipped_small{0}, construction_failures{0};
-    std::array<std::size_t, NUM_CONFIGS> filter_bytes{};
+    std::array<uint64_t, NUM_CONFIGS> filter_bytes{};
     std::size_t total_block_index{0};
     std::size_t blocks_processed{0};
 
