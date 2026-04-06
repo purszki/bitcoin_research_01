@@ -1450,7 +1450,7 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                       << std::endl;
 
             // Build GCS filters for timing loop (one filter type only).
-            std::size_t gcs_skip{0}, gcs_tb{0};
+            std::size_t gcs_skip{0}; uint64_t gcs_tb{0};
             auto gcs_data = BuildGCSFiltersStreaming(chunk_metas, scan_max_blocks, gcs_skip, gcs_tb);
             bench.name("GCS/" + short_name);
             bench.run([&] {
@@ -1474,7 +1474,7 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                       << " block_download=" << block_dl_mb
                       << std::endl;
 
-            std::size_t skip{0}, cf{0}, tb{0};
+            std::size_t skip{0}, cf{0}; uint64_t tb{0};
             auto data = BuildFuseFiltersStreaming<Fuse16Filter>(chunk_metas, scan_max_blocks, skip, cf, tb);
             bench.name("F16/" + short_name);
             bench.run([&] {
@@ -1498,7 +1498,7 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                       << " block_download=" << block_dl_mb
                       << std::endl;
 
-            std::size_t skip{0}, cf{0}, tb{0};
+            std::size_t skip{0}, cf{0}; uint64_t tb{0};
             auto data = BuildFuseFiltersStreaming<Fuse18Filter>(chunk_metas, scan_max_blocks, skip, cf, tb);
             bench.name("F18/" + short_name);
             bench.run([&] {
@@ -1522,7 +1522,7 @@ static void ResearchAllFiltersAllWallets(benchmark::Bench& bench)
                       << " block_download=" << block_dl_mb
                       << std::endl;
 
-            std::size_t skip{0}, cf{0}, tb{0};
+            std::size_t skip{0}, cf{0}; uint64_t tb{0};
             auto data = BuildFuseFiltersStreaming<Fuse20Filter>(chunk_metas, scan_max_blocks, skip, cf, tb);
             bench.name("F20/" + short_name);
             bench.run([&] {
