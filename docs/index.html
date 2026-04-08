@@ -401,7 +401,7 @@
           <h3>What we achieved</h3>
           <p>We built a reproducible benchmark framework on top of Bitcoin Core and used it to evaluate Binary Fuse filters as an alternative to Golomb-Rice coded sets. Across 50,000 real mainnet blocks and 10 wallet scenarios (from 24 to 480 scripts), benchmarked on both desktop x86-64 and a Raspberry Pi 5 (ARM Cortex-A76), the current results support two concrete conclusions:</p>
           <ul>
-            <li><strong>Fuse16 is a strong candidate for a new compact block filter type alongside BIP 158 basic filters.</strong> In the 50k-block benchmark, Fuse16 preserves zero false negatives, reduces client-side query CPU by <strong>9x to 81x on desktop</strong> and <strong>5x to 44x on ARM</strong> across the wallet set, and produces slightly smaller filter data than GCS (<strong>955.9 MB vs 972.1 MB</strong>). When matched-block downloads are included, total bandwidth stays very close to GCS, rising by only about <strong>0.2% to 2.9%</strong> in the current measurements.</li>
+            <li><strong>Fuse16 is a strong candidate for a new compact block filter type alongside BIP 158 basic filters.</strong> In the 50k-block benchmark, Fuse16 preserves zero false negatives, reduces client-side query CPU by <strong>9x to 81x on desktop</strong> and <strong>6x to 46x on ARM</strong> across the wallet set, and produces slightly smaller filter data than GCS (<strong>955.9 MB vs 972.1 MB</strong>). When matched-block downloads are included, total bandwidth stays very close to GCS, rising by only about <strong>0.2% to 2.9%</strong> in the current measurements.</li>
             <li><strong>Hierarchical Fuse filters are a promising bandwidth-oriented research direction.</strong> We also benchmarked two-stage Fuse designs that try to reduce total bandwidth further without giving up the speed advantage completely. Some variants improve the bandwidth tradeoff, and some achieve zero false positives in the current 50k run. But this work is still experimental: it needs more optimization, clearer protocol design, and dedicated privacy analysis because a two-stage retrieval scheme may leak wallet interest unless the request pattern is carefully hidden.</li>
           </ul>
           <p>The speedup comes from a fundamental algorithmic difference: GCS requires O(N) sequential decoding per query, while flat Fuse16 answers each query with exactly 3 random memory lookups — O(1) regardless of filter size. The hierarchical variants build on the same idea, but add an extra protocol layer that is not yet deployment-ready.</p>
@@ -759,7 +759,7 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
           <p>8-bit filters are ~50% smaller and ~100x faster, but their FPR (1/256) causes thousands of unnecessary full block downloads (~2.6 GB for Fuse8 at 20k blocks). The bandwidth cost far exceeds the size savings.</p>
 
           <h3 id="bench-flat">Profiling Results: Flat Fuse Variants vs GCS (50k mainnet blocks)</h3>
-          <p>The flat-filter comparison covers GCS, Fuse16, Fuse18, and Fuse20 across both platforms. Desktop results use <a href="https://github.com/purszki/bitcoin_research_01/blob/fuse_filter_research_docs/light_client_research/results/wallet_benchmark_results_50000.txt"><code>wallet_benchmark_results_50000.txt</code></a>; Raspberry Pi 5 results use <a href="https://github.com/purszki/bitcoin_research_01/blob/fuse_filter_research_docs/light_client_research/results/raspberry_pi5_wallet_benchmark_results_50000.txt"><code>raspberry_pi5_wallet_benchmark_results_50000.txt</code></a>. Filter sizes and match counts are identical across platforms; only timing differs.</p>
+          <p>The flat-filter comparison covers GCS, Fuse16, Fuse18, and Fuse20 across both platforms. Desktop results use <a href="https://github.com/purszki/bitcoin_research_01/blob/fuse_filter_research_docs/light_client_research/results/wallet_benchmark_results_50000.txt"><code>wallet_benchmark_results_50000.txt</code></a>; Raspberry Pi 5 results use <a href="https://github.com/purszki/bitcoin_research_01/blob/fuse_filter_research_docs/light_client_research/results/arm_fixed_wallet_benchmark_results_50000.txt"><code>arm_fixed_wallet_benchmark_results_50000.txt</code></a>. Filter sizes and match counts are identical across platforms; only timing differs.</p>
 
           <p><strong>CPU speed — Raspberry Pi 5</strong> (ARM Cortex-A76, deserialize + MatchAny, lower is better):</p>
           <div class="table-wrap">
@@ -768,16 +768,16 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
                 <tr><th>Wallet</th><th>Scripts</th><th>GCS ms</th><th>F16 ms</th><th>F16 speedup</th><th>F18 ms</th><th>F20 ms</th></tr>
               </thead>
               <tbody>
-                <tr><td>Simple User</td><td>24</td><td>14,175</td><td>322</td><td>44x</td><td>3,260</td><td>3,431</td></tr>
-                <tr><td>Cold Storage Vault</td><td>60</td><td>15,034</td><td>711</td><td>21x</td><td>3,668</td><td>3,858</td></tr>
-                <tr><td>Legacy Migrator</td><td>90</td><td>11,932</td><td>762</td><td>16x</td><td>3,691</td><td>3,939</td></tr>
-                <tr><td>Taproot Power User</td><td>96</td><td>14,877</td><td>1,008</td><td>15x</td><td>4,009</td><td>4,272</td></tr>
-                <tr><td>CoinJoin Privacy User</td><td>120</td><td>14,616</td><td>1,113</td><td>13x</td><td>4,271</td><td>4,552</td></tr>
-                <tr><td>Merchant Batch Settler</td><td>140</td><td>12,200</td><td>1,073</td><td>11x</td><td>4,098</td><td>4,259</td></tr>
-                <tr><td>Lightning Operator</td><td>180</td><td>16,114</td><td>1,746</td><td>9x</td><td>4,751</td><td>5,040</td></tr>
-                <tr><td>Custody Wallet</td><td>220</td><td>14,937</td><td>2,039</td><td>7x</td><td>5,052</td><td>5,191</td></tr>
-                <tr><td>Watch-Only Auditor</td><td>320</td><td>13,551</td><td>2,201</td><td>6x</td><td>5,267</td><td>5,263</td></tr>
-                <tr><td>Exchange Hot Wallet</td><td>480</td><td>14,524</td><td>3,155</td><td>5x</td><td>6,261</td><td>6,356</td></tr>
+                <tr><td>Simple User</td><td>24</td><td>14,547</td><td>317</td><td>46x</td><td>3,471</td><td>3,527</td></tr>
+                <tr><td>Cold Storage Vault</td><td>60</td><td>15,821</td><td>750</td><td>21x</td><td>3,682</td><td>3,972</td></tr>
+                <tr><td>Legacy Migrator</td><td>90</td><td>12,236</td><td>672</td><td>18x</td><td>3,620</td><td>3,779</td></tr>
+                <tr><td>Taproot Power User</td><td>96</td><td>14,827</td><td>1,008</td><td>15x</td><td>3,957</td><td>4,095</td></tr>
+                <tr><td>CoinJoin Privacy User</td><td>120</td><td>14,680</td><td>1,054</td><td>14x</td><td>3,998</td><td>4,159</td></tr>
+                <tr><td>Merchant Batch Settler</td><td>140</td><td>12,071</td><td>1,207</td><td>10x</td><td>4,382</td><td>4,280</td></tr>
+                <tr><td>Lightning Operator</td><td>180</td><td>16,867</td><td>1,817</td><td>9x</td><td>4,954</td><td>5,094</td></tr>
+                <tr><td>Custody Wallet</td><td>220</td><td>16,103</td><td>2,010</td><td>8x</td><td>5,226</td><td>5,344</td></tr>
+                <tr><td>Watch-Only Auditor</td><td>320</td><td>13,552</td><td>2,396</td><td>6x</td><td>5,365</td><td>5,487</td></tr>
+                <tr><td>Exchange Hot Wallet</td><td>480</td><td>14,605</td><td>2,554</td><td>6x</td><td>5,573</td><td>5,714</td></tr>
               </tbody>
             </table>
           </div>
@@ -842,14 +842,14 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
 
           <p>Key observations:</p>
           <ul>
-            <li><strong>Fuse16 remains the CPU winner in every wallet on both platforms.</strong> On desktop x86-64 it ranges from 9x to 81x faster than GCS. On the Raspberry Pi 5 (ARM Cortex-A76) it ranges from 5x to 44x faster.</li>
+            <li><strong>Fuse16 remains the CPU winner in every wallet on both platforms.</strong> On desktop x86-64 it ranges from 9x to 81x faster than GCS. On the Raspberry Pi 5 (ARM Cortex-A76) it ranges from 6x to 46x faster.</li>
             <li><strong>F18 and F20 reduce false-positive-driven block downloads relative to Fuse16, but their larger filters more than offset that gain.</strong> In this flat-filter comparison, both variants are slower than Fuse16 and still worse than GCS on total bandwidth.</li>
             <li><strong>GCS keeps the lowest total bandwidth among these flat filters</strong>, but it pays for that result with much higher client-side CPU cost.</li>
           </ul>
 
 
           <h3 id="bench-hierarchical">Profiling Results: Experimental Hierarchical Fuse Variants vs GCS (50k mainnet blocks)</h3>
-          <p>The experimental hierarchical comparison covers <code>F16+20</code>, <code>F10+10</code>, <code>F12+12</code>, <code>F12+16</code>, <code>F12+18</code>, and three Fuse+GCS hybrids: <code>F8+GCS</code>, <code>F12+GCS</code>, and <code>F16+GCS</code>. Desktop results use <a href="https://github.com/purszki/bitcoin_research_01/blob/fuse_filter_research_docs/light_client_research/results/wallet_benchmark_results_50000.txt"><code>wallet_benchmark_results_50000.txt</code></a>; Raspberry Pi 5 results use <a href="https://github.com/purszki/bitcoin_research_01/blob/fuse_filter_research_docs/light_client_research/results/raspberry_pi5_wallet_benchmark_results_50000.txt"><code>raspberry_pi5_wallet_benchmark_results_50000.txt</code></a>. In the Fuse+GCS hybrids the outer layer is a fast Fuse filter and the inner layer is the existing BIP&nbsp;158 GCS filter, which full nodes already compute and serve. These schemes trade protocol simplicity for a different speed/bandwidth frontier.</p>
+          <p>The experimental hierarchical comparison covers <code>F16+20</code>, <code>F10+10</code>, <code>F12+12</code>, <code>F12+16</code>, <code>F12+18</code>, and three Fuse+GCS hybrids: <code>F8+GCS</code>, <code>F12+GCS</code>, and <code>F16+GCS</code>. Desktop results use <a href="https://github.com/purszki/bitcoin_research_01/blob/fuse_filter_research_docs/light_client_research/results/wallet_benchmark_results_50000.txt"><code>wallet_benchmark_results_50000.txt</code></a>; Raspberry Pi 5 results use <a href="https://github.com/purszki/bitcoin_research_01/blob/fuse_filter_research_docs/light_client_research/results/arm_fixed_wallet_benchmark_results_50000.txt"><code>arm_fixed_wallet_benchmark_results_50000.txt</code></a>. In the Fuse+GCS hybrids the outer layer is a fast Fuse filter and the inner layer is the existing BIP&nbsp;158 GCS filter, which full nodes already compute and serve. These schemes trade protocol simplicity for a different speed/bandwidth frontier.</p>
 
           <p><strong>CPU speed — Raspberry Pi 5</strong> (ARM Cortex-A76, hierarchical; lower is better):</p>
           <div class="table-wrap">
@@ -858,16 +858,16 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
                 <tr><th>Wallet</th><th>Scripts</th><th>GCS ms</th><th>F16+20 ms</th><th>F10+10 ms</th><th>F12+12 ms</th><th>F12+16 ms</th><th>F12+18 ms</th><th>F8+GCS ms</th><th>F12+GCS ms</th><th>F16+GCS ms</th></tr>
               </thead>
               <tbody>
-                <tr><td>Simple User</td><td>24</td><td>14,175</td><td>437</td><td>2,564</td><td>772</td><td>761</td><td>852</td><td>1,146</td><td>1,003</td><td>540</td></tr>
-                <tr><td>Cold Storage Vault</td><td>60</td><td>15,034</td><td>802</td><td>3,026</td><td>1,169</td><td>1,164</td><td>1,264</td><td>2,580</td><td>1,409</td><td>885</td></tr>
-                <tr><td>Legacy Migrator</td><td>90</td><td>11,932</td><td>2,303</td><td>4,101</td><td>1,542</td><td>1,362</td><td>2,697</td><td>6,298</td><td>4,737</td><td>4,193</td></tr>
-                <tr><td>Taproot Power User</td><td>96</td><td>14,877</td><td>1,633</td><td>3,743</td><td>1,613</td><td>1,636</td><td>2,193</td><td>4,910</td><td>3,156</td><td>2,466</td></tr>
-                <tr><td>CoinJoin Privacy User</td><td>120</td><td>14,616</td><td>1,857</td><td>3,985</td><td>1,800</td><td>1,638</td><td>2,391</td><td>5,638</td><td>3,326</td><td>2,781</td></tr>
-                <tr><td>Merchant Batch Settler</td><td>140</td><td>12,200</td><td>3,164</td><td>4,822</td><td>2,092</td><td>1,834</td><td>3,509</td><td>8,125</td><td>6,059</td><td>5,468</td></tr>
-                <tr><td>Lightning Operator</td><td>180</td><td>16,114</td><td>2,210</td><td>4,535</td><td>2,374</td><td>2,317</td><td>2,715</td><td>7,443</td><td>3,363</td><td>2,650</td></tr>
-                <tr><td>Custody Wallet</td><td>220</td><td>14,937</td><td>3,123</td><td>5,260</td><td>2,812</td><td>2,669</td><td>3,626</td><td>10,333</td><td>5,127</td><td>4,380</td></tr>
-                <tr><td>Watch-Only Auditor</td><td>320</td><td>13,551</td><td>4,868</td><td>6,659</td><td>3,765</td><td>3,503</td><td>5,296</td><td>13,054</td><td>8,092</td><td>7,317</td></tr>
-                <tr><td>Exchange Hot Wallet</td><td>480</td><td>14,524</td><td>6,337</td><td>8,226</td><td>5,127</td><td>4,867</td><td>6,832</td><td>18,153</td><td>9,903</td><td>8,923</td></tr>
+                <tr><td>Simple User</td><td>24</td><td>14,547</td><td>439</td><td>2,601</td><td>807</td><td>797</td><td>905</td><td>1,176</td><td>1,053</td><td>570</td></tr>
+                <tr><td>Cold Storage Vault</td><td>60</td><td>15,821</td><td>804</td><td>3,040</td><td>1,210</td><td>1,204</td><td>1,300</td><td>2,597</td><td>1,421</td><td>894</td></tr>
+                <tr><td>Legacy Migrator</td><td>90</td><td>12,236</td><td>2,297</td><td>4,089</td><td>1,575</td><td>1,375</td><td>2,703</td><td>6,010</td><td>4,772</td><td>4,201</td></tr>
+                <tr><td>Taproot Power User</td><td>96</td><td>14,827</td><td>1,615</td><td>3,744</td><td>1,639</td><td>1,555</td><td>2,075</td><td>4,920</td><td>2,926</td><td>2,336</td></tr>
+                <tr><td>CoinJoin Privacy User</td><td>120</td><td>14,680</td><td>1,811</td><td>3,924</td><td>1,734</td><td>1,682</td><td>2,288</td><td>5,868</td><td>3,317</td><td>2,681</td></tr>
+                <tr><td>Merchant Batch Settler</td><td>140</td><td>12,071</td><td>3,114</td><td>4,825</td><td>2,103</td><td>1,877</td><td>3,515</td><td>8,934</td><td>6,384</td><td>5,538</td></tr>
+                <tr><td>Lightning Operator</td><td>180</td><td>16,867</td><td>2,365</td><td>4,724</td><td>2,520</td><td>2,525</td><td>2,873</td><td>7,746</td><td>3,553</td><td>2,835</td></tr>
+                <tr><td>Custody Wallet</td><td>220</td><td>16,103</td><td>3,343</td><td>5,413</td><td>2,914</td><td>2,693</td><td>3,629</td><td>9,754</td><td>5,112</td><td>4,348</td></tr>
+                <tr><td>Watch-Only Auditor</td><td>320</td><td>13,552</td><td>4,877</td><td>6,665</td><td>3,875</td><td>3,621</td><td>5,311</td><td>14,236</td><td>8,237</td><td>7,314</td></tr>
+                <tr><td>Exchange Hot Wallet</td><td>480</td><td>14,605</td><td>6,350</td><td>8,226</td><td>5,209</td><td>4,912</td><td>6,900</td><td>16,648</td><td>9,836</td><td>8,934</td></tr>
               </tbody>
             </table>
           </div>
@@ -942,7 +942,7 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
           <h3>Limitations and future profiling improvements</h3>
           <p>The benchmarks now cover both desktop x86-64 and ARM (Raspberry Pi 5). The ARM results confirm the algorithmic advantage holds on low-power hardware, though with reduced speedup ratios. Important remaining gaps:</p>
           <ol>
-            <li><strong>Mobile SoC profiling.</strong> The Raspberry Pi 5 (Cortex-A76) provides our first ARM data point, confirming 5x-44x Fuse16 speedup over GCS. Mobile phones (Snapdragon, Apple A-series) have different cache hierarchies and thermal constraints. Profiling on actual phone hardware would complete the picture.</li>
+            <li><strong>Mobile SoC profiling.</strong> The Raspberry Pi 5 (Cortex-A76) provides our first ARM data point, confirming 6x-46x Fuse16 speedup over GCS. Mobile phones (Snapdragon, Apple A-series) have different cache hierarchies and thermal constraints. Profiling on actual phone hardware would complete the picture.</li>
             <li><strong>Measuring actual network cost beyond byte totals.</strong> The current bandwidth tables already count actual serialized filter bytes, actual on-demand inner-filter bytes, and actual full-block bytes for every reported match in the 50,000-block dataset. What they still do not model is transport behavior: request batching, round-trip latency, peer behavior, retries, parallel downloads, and the CPU cost of parsing blocks after receipt. For hierarchical schemes there is an additional unresolved question: whether inner-filter retrieval can preserve wallet privacy without giving up the measured bandwidth gains.</li>
             <li><strong>Skipped blocks with fewer than 2 elements.</strong> Both the Fuse filter wrappers and the GCS benchmark path require at least 2 unique script elements to construct a filter. Blocks with 0 or 1 elements (typically empty blocks or blocks with only a coinbase) are skipped during benchmarking. In the 50,000-block dataset, 55 blocks fall into this category. Skipping them has almost no impact on match counts, false positive rates or profiling results. A production implementation would need to handle these blocks (e.g., by padding or using a trivial filter).</li>
             <li><strong>End-to-end wall-clock measurement.</strong> The current benchmarks measure filter query time in isolation. A production-relevant benchmark would measure the full wallet sync flow: receive filter bytes over a (simulated) network, deserialize, query, and on match download and process the block. This would capture the true user-facing latency including I/O and memory allocation overhead.</li>
@@ -951,7 +951,7 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
 
         <section id="path">
           <h2>Path to Protocol-Ready</h2>
-          <p>The proof-of-concept results are promising (5–81x speedup across desktop and ARM, comparable filter size, acceptable FP overhead). Below is what remains to go from research prototype to a deployable protocol change.</p>
+          <p>The proof-of-concept results are promising (6–81x speedup across desktop and ARM, comparable filter size, acceptable FP overhead). Below is what remains to go from research prototype to a deployable protocol change.</p>
           <h3>1. Evaluate Cuckoo filters</h3>
           <p>Cuckoo filters are another commonly suggested alternative to GCS. They offer O(1) lookup (similar to Fuse), support deletion (which Fuse does not), and have well-studied implementations. Before committing to Fuse as the proposal, we should build a proof-of-concept Cuckoo filter implementation using the same benchmark framework and compare. Our guess is that Fuse will be faster, but the evaluation must happen.</p>
 
@@ -1006,7 +1006,7 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
           </ul>
 
           <h3>7. Mobile SoC profiling</h3>
-          <p>The Raspberry Pi 5 results confirm the ARM speedup (5x-44x). Profiling on actual phone SoCs (Snapdragon, Apple A-series) under thermal and battery constraints would complete the picture, but the algorithmic advantage is established.</p>
+          <p>The Raspberry Pi 5 results confirm the ARM speedup (6x-46x). Profiling on actual phone SoCs (Snapdragon, Apple A-series) under thermal and battery constraints would complete the picture, but the algorithmic advantage is established.</p>
 
           <h3>8. End-to-end integration test</h3>
           <p>Build a prototype light client that performs the full sync flow:</p>
@@ -1059,7 +1059,7 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
         <section id="conclusion">
           <h2>Conclusion</h2>
           <p>This research set out to answer a simple question: can we make private Bitcoin wallet sync fast enough for mobile phones? The answer, based on 50,000 mainnet blocks, 10 wallet scenarios, and benchmarks on both desktop x86-64 and ARM hardware, is a clear yes — with the right data structure.</p>
-          <p>The strongest current result is that flat Binary Fuse16 filters are a strong candidate for a new compact block filter type alongside BIP 158 basic filters. In the 50,000-block benchmark they deliver <strong>9x to 81x faster queries on desktop and 5x to 44x on ARM</strong>, <strong>slightly smaller filter data</strong>, and <strong>zero false negatives</strong>, while keeping total bandwidth very close to GCS.</p>
+          <p>The strongest current result is that flat Binary Fuse16 filters are a strong candidate for a new compact block filter type alongside BIP 158 basic filters. In the 50,000-block benchmark they deliver <strong>9x to 81x faster queries on desktop and 6x to 46x on ARM</strong>, <strong>slightly smaller filter data</strong>, and <strong>zero false negatives</strong>, while keeping total bandwidth very close to GCS.</p>
           <p>The core insight is algorithmic: GCS forces O(N) sequential decoding for every query, while Fuse16 answers with exactly 3 memory lookups — O(1) regardless of how many elements the filter contains. This is not an optimization of the existing approach; it is a fundamentally different tradeoff. The ARM benchmarks confirm that the advantage holds on low-power hardware, though the speedup ratio narrows because Fuse's random access pattern is more sensitive to cache latency than GCS's sequential decode.</p>
           <p>A second result is that hierarchical Fuse filters may open a better bandwidth frontier, but that line of work is still experimental. It needs more optimization and explicit privacy-preserving protocol design, because on-demand inner-filter retrieval could leak wallet interest if handled naively. Beyond that, the path to deployment requires a native C++ implementation, mobile SoC profiling, deterministic construction and wire-format specs, and a BIP proposal. The filter would deploy as an optional new type — no consensus change, no breaking change, gradual adoption.</p>
         </section>
