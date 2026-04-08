@@ -369,7 +369,7 @@
   <main class="container">
     <header class="hero">
       <h1>Bitcoin Light Client Block Filter Research</h1>
-      <p class="meta-line">6th of April 2026 • Scope: 50,000 mainnet blocks (heights 889,327–939,326) • 10 wallet scenarios</p>
+      <p class="meta-line">8th of April 2026 • Scope: 50,000 mainnet blocks (heights 889,327–939,326) • 10 wallet scenarios</p>
       <p class="subtitle">
         Benchmarking BIP 158 against Binary Fuse filters, with reproducible datasets, wallet scenarios, and ground-truth validation on real mainnet data. Now with ARM results from a Raspberry Pi 5.
       </p>
@@ -792,7 +792,7 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
                     <tr><th>Wallet</th><th>Scripts</th><th>GCS ms</th><th>F16 ms</th><th>F16 speedup</th><th>F18 ms</th><th>F20 ms</th></tr>
                   </thead>
                   <tbody>
-                    <tr><td>Simple User</td><td>24</td><td>10,082</td><td>125</td><td>81x</td><td>1,392</td><td>1,458</td></tr>
+                    <tr><td>Simple User</td><td>24</td><td>10,081</td><td>125</td><td>81x</td><td>1,392</td><td>1,458</td></tr>
                     <tr><td>Cold Storage Vault</td><td>60</td><td>10,535</td><td>237</td><td>44x</td><td>1,510</td><td>1,573</td></tr>
                     <tr><td>Legacy Migrator</td><td>90</td><td>8,249</td><td>257</td><td>32x</td><td>1,534</td><td>1,598</td></tr>
                     <tr><td>Taproot Power User</td><td>96</td><td>9,970</td><td>311</td><td>32x</td><td>1,580</td><td>1,645</td></tr>
@@ -807,6 +807,9 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
               </div>
             </div>
           </details>
+          <div style="margin: 1.5rem 0; max-width: 900px;">
+            <canvas id="cpuChartArm" height="360"></canvas>
+          </div>
           <div style="margin: 1.5rem 0; max-width: 900px;">
             <canvas id="cpuChart" height="360"></canvas>
           </div>
@@ -882,7 +885,7 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
                     <tr><th>Wallet</th><th>Scripts</th><th>GCS ms</th><th>F16+20 ms</th><th>F10+10 ms</th><th>F12+12 ms</th><th>F12+16 ms</th><th>F12+18 ms</th><th>F8+GCS ms</th><th>F12+GCS ms</th><th>F16+GCS ms</th></tr>
                   </thead>
                   <tbody>
-                    <tr><td>Simple User</td><td>24</td><td>10,082</td><td>169</td><td>1,270</td><td>448</td><td>440</td><td>475</td><td>720</td><td>613</td><td>278</td></tr>
+                    <tr><td>Simple User</td><td>24</td><td>10,081</td><td>169</td><td>1,270</td><td>448</td><td>440</td><td>475</td><td>720</td><td>613</td><td>278</td></tr>
                     <tr><td>Cold Storage Vault</td><td>60</td><td>10,535</td><td>277</td><td>1,421</td><td>552</td><td>547</td><td>591</td><td>1,588</td><td>734</td><td>349</td></tr>
                     <tr><td>Legacy Migrator</td><td>90</td><td>8,249</td><td>935</td><td>1,941</td><td>774</td><td>642</td><td>1,217</td><td>4,128</td><td>3,054</td><td>2,676</td></tr>
                     <tr><td>Taproot Power User</td><td>96</td><td>9,970</td><td>582</td><td>1,701</td><td>715</td><td>666</td><td>896</td><td>2,929</td><td>1,668</td><td>1,239</td></tr>
@@ -897,6 +900,9 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
               </div>
             </div>
           </details>
+          <div style="margin: 1.5rem 0; max-width: 900px;">
+            <canvas id="hierCpuChartArm" height="360"></canvas>
+          </div>
           <div style="margin: 1.5rem 0; max-width: 900px;">
             <canvas id="hierCpuChart" height="360"></canvas>
           </div>
@@ -932,7 +938,7 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
 
           <p>Key observations:</p>
           <ul>
-            <li><strong>The hierarchical variants remain much faster than GCS on both platforms</strong>, but none of them beats flat Fuse16 on CPU time. In this group, <code>F16+20</code> is usually the fastest hierarchical option, while <code>F10+10</code> is typically the slowest. The ARM results confirm the same ranking.</li>
+            <li><strong>The hierarchical variants remain much faster than GCS on both platforms</strong>, but none of them beats flat Fuse16 on CPU time. On desktop, <code>F16+20</code> is the fastest hierarchical option for small wallets (6 of 10), while on ARM <code>F12+16</code> wins in the majority of wallets (7 of 10) because its smaller outer filter stresses the ARM cache less. <code>F10+10</code> is typically the slowest on both platforms.</li>
             <li><strong><code>F10+10</code> is the strongest bandwidth result in the current experimental set.</strong> It beats GCS on total bandwidth in 8 of 10 wallets, but it does so with only modest speedups and a non-zero false-positive rate.</li>
             <li><strong><code>F12+16</code> is the cleanest zero-false-positive hierarchical result.</strong> In the current 50k run it keeps zero false positives across all wallets, remains materially faster than GCS, and lands near the middle of the experimental bandwidth tradeoff curve.</li>
             <li><strong><code>F16+20</code> proves that a zero-false-positive two-stage design is possible, but not yet economical.</strong> In the current measurements it is worse than GCS on total bandwidth in all 10 wallets because the extra inner-filter traffic outweighs the saved block downloads.</li>
@@ -1261,6 +1267,11 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
       const cpuF18 = [1392.0, 1510.4, 1533.9, 1580.1, 1603.6, 1768.8, 1819.5, 1895.2, 2001.4, 2293.1];
       const cpuF20 = [1457.9, 1573.0, 1597.8, 1645.1, 1675.9, 1733.3, 1897.2, 1986.6, 2004.5, 2363.8];
 
+      const armCpuGCS = [14547.1, 15820.8, 12235.6, 14827.1, 14680.4, 12071.0, 16867.3, 16102.7, 13552.2, 14605.2];
+      const armCpuF16 = [316.8, 750.4, 672.0, 1008.0, 1054.4, 1206.9, 1817.4, 2010.0, 2396.0, 2554.1];
+      const armCpuF18 = [3470.5, 3682.2, 3619.5, 3957.4, 3998.1, 4382.1, 4953.8, 5226.1, 5364.7, 5572.8];
+      const armCpuF20 = [3526.8, 3971.6, 3779.0, 4095.0, 4158.8, 4280.0, 5093.6, 5343.7, 5487.4, 5713.9];
+
       const bwGCS = [2544.257, 2083.057, 27945.347, 11561.647, 13173.247, 33695.347, 7003.037, 17756.747, 35732.847, 42272.847];
       const bwF16 = [2555.803, 2143.943, 28003.093, 11643.493, 13269.393, 33770.393, 7189.113, 17938.493, 35889.293, 42445.393];
       const bwF18 = [2656.590, 2212.660, 28065.810, 11686.710, 13300.110, 33819.910, 7153.750, 17902.410, 35867.910, 42410.710];
@@ -1285,6 +1296,41 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
         }
       };
 
+      new Chart(document.getElementById('cpuChartArm'), {
+        type: 'bar',
+        data: {
+          labels: wallets,
+          datasets: [
+            { label: 'GCS (ms)',   data: armCpuGCS, backgroundColor: palette.gcs.bg,  borderColor: palette.gcs.border,  borderWidth: 1 },
+            { label: 'Fuse16 (ms)', data: armCpuF16, backgroundColor: palette.f16.bg,  borderColor: palette.f16.border,  borderWidth: 1 },
+            { label: 'Fuse18 (ms)', data: armCpuF18, backgroundColor: palette.f18.bg,  borderColor: palette.f18.border,  borderWidth: 1 },
+            { label: 'Fuse20 (ms)', data: armCpuF20, backgroundColor: palette.f20.bg,  borderColor: palette.f20.border,  borderWidth: 1 }
+          ]
+        },
+        options: {
+          ...sharedOptions,
+          plugins: {
+            ...sharedOptions.plugins,
+            title: {
+              display: true,
+              text: 'Raspberry Pi 5 (ARM) — flat filter query time (lower is better)',
+              font: { family: '"Fraunces", serif', size: 16, weight: 700 },
+              color: '#22201a',
+              padding: { bottom: 16 }
+            },
+            tooltip: {
+              callbacks: {
+                label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()} ms`
+              }
+            }
+          },
+          scales: {
+            ...sharedOptions.scales,
+            y: { ...sharedOptions.scales.y, title: { display: true, text: 'Time (ms)', font: { family: '"Source Sans 3", sans-serif', size: 13 } } }
+          }
+        }
+      });
+
       new Chart(document.getElementById('cpuChart'), {
         type: 'bar',
         data: {
@@ -1302,7 +1348,7 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
             ...sharedOptions.plugins,
             title: {
               display: true,
-              text: 'Client-side query time — deserialize + MatchAny (lower is better)',
+              text: 'Desktop x86-64 — flat filter query time (lower is better)',
               font: { family: '"Fraunces", serif', size: 16, weight: 700 },
               color: '#22201a',
               padding: { bottom: 16 }
@@ -1377,6 +1423,16 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
       const hCpuF12_GCS = [613.0, 734.4, 3053.6, 1667.6, 1898.9, 3861.1, 1709.3, 2855.9, 4622.0, 5457.0];
       const hCpuF16_GCS = [278.3, 349.4, 2676.4, 1239.2, 1458.0, 3397.3, 1157.0, 2281.8, 4058.4, 4713.4];
 
+      const hArmCpuGCS    = [14547.1, 15820.8, 12235.6, 14827.1, 14680.4, 12071.0, 16867.3, 16102.7, 13552.2, 14605.2];
+      const hArmCpuF16_20 = [439.3, 804.0, 2297.3, 1614.9, 1811.2, 3114.0, 2365.0, 3343.4, 4876.8, 6350.3];
+      const hArmCpuF10_10 = [2601.2, 3040.3, 4088.7, 3744.2, 3923.9, 4824.8, 4724.1, 5412.6, 6665.2, 8225.5];
+      const hArmCpuF12_12 = [806.6, 1210.1, 1575.2, 1639.0, 1733.5, 2103.0, 2520.4, 2914.0, 3874.5, 5209.1];
+      const hArmCpuF12_16 = [796.5, 1203.7, 1374.7, 1555.4, 1682.0, 1876.7, 2525.1, 2692.5, 3620.7, 4912.3];
+      const hArmCpuF12_18 = [904.9, 1299.7, 2702.6, 2074.9, 2287.9, 3514.6, 2873.4, 3629.2, 5311.4, 6899.5];
+      const hArmCpuF8_GCS  = [1175.7, 2596.9, 6009.7, 4919.8, 5868.1, 8933.5, 7745.7, 9753.8, 14235.6, 16647.8];
+      const hArmCpuF12_GCS = [1053.1, 1420.5, 4771.7, 2926.4, 3316.5, 6384.2, 3553.0, 5111.6, 8236.7, 9835.6];
+      const hArmCpuF16_GCS = [570.3, 894.0, 4201.4, 2335.7, 2680.5, 5537.7, 2835.3, 4348.2, 7314.2, 8933.9];
+
       const hBwGCS    = [2544.257, 2083.057, 27945.347, 11561.647, 13173.247, 33695.347, 7003.037, 17756.747, 35732.847, 42272.847];
       const hBwF16_20 = [2558.250, 2090.117, 28458.200, 11737.560, 13393.060, 34328.770, 7097.310, 18074.820, 36385.850, 42978.800];
       const hBwF10_10 = [2199.385, 1756.452, 27864.821, 11330.304, 12976.099, 33681.057, 6771.512, 17630.290, 35751.900, 42360.980];
@@ -1399,6 +1455,36 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
         }));
       }
 
+      new Chart(document.getElementById('hierCpuChartArm'), {
+        type: 'bar',
+        data: {
+          labels: wallets,
+          datasets: hierDatasets([hArmCpuGCS, hArmCpuF16_20, hArmCpuF10_10, hArmCpuF12_12, hArmCpuF12_16, hArmCpuF12_18, hArmCpuF8_GCS, hArmCpuF12_GCS, hArmCpuF16_GCS], 'ms')
+        },
+        options: {
+          ...sharedOptions,
+          plugins: {
+            ...sharedOptions.plugins,
+            title: {
+              display: true,
+              text: 'Raspberry Pi 5 (ARM) — hierarchical query time (lower is better)',
+              font: { family: '"Fraunces", serif', size: 16, weight: 700 },
+              color: '#22201a',
+              padding: { bottom: 16 }
+            },
+            tooltip: {
+              callbacks: {
+                label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()} ms`
+              }
+            }
+          },
+          scales: {
+            ...sharedOptions.scales,
+            y: { ...sharedOptions.scales.y, title: { display: true, text: 'Time (ms)', font: { family: '"Source Sans 3", sans-serif', size: 13 } } }
+          }
+        }
+      });
+
       new Chart(document.getElementById('hierCpuChart'), {
         type: 'bar',
         data: {
@@ -1411,7 +1497,7 @@ BIN_WALLET_SCENARIO=light_client_research/mainnet_datasets/wallet_use_cases/wall
             ...sharedOptions.plugins,
             title: {
               display: true,
-              text: 'Hierarchical variants — client-side query time (lower is better)',
+              text: 'Desktop x86-64 — hierarchical query time (lower is better)',
               font: { family: '"Fraunces", serif', size: 16, weight: 700 },
               color: '#22201a',
               padding: { bottom: 16 }
